@@ -30,8 +30,5 @@ jobs:
       uses: actions/forgejo-release@v2.7.1
       with:
         direction: upload
-        url: https://git.araj.me
-        repo: maxking/proxmox-dns-server
         release-notes: "Uploaded from Forgejo"
-        token: ${{ secrets.TOKEN }}
         release-dir: dist/
