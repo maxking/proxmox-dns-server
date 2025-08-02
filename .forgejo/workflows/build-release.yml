@@ -28,11 +28,8 @@ jobs:
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o proxmox-dns-server-linux-amd64 .
 
     - name: Upload binary to release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: actions/upload-artifact@v4
       with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./proxmox-dns-server-linux-amd64
-        asset_name: proxmox-dns-server-linux-amd64
-        asset_content_type: application/octet-stream
+        name: proxmox-dns-server-linux-amd64
+        path: ./proxmox-dns-server-linux-amd64
+        retention-days: 30
