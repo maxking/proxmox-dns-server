@@ -27,7 +27,7 @@ jobs:
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o proxmox-dns-server-linux-amd64 .
         mv proxmox-dns-server-linux-amd64 dist/
     - name: Upload binary to release
-      uses: actions/forgejo-release@v2.7.0
+      uses: actions/forgejo-release@v2.6.1
       with:
         direction: upload
         release-dir: dist/
