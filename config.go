@@ -8,20 +8,23 @@ import (
 )
 
 type Config struct {
-	Zone string `json:"zone"`
-	Port string `json:"port"`
+	Zone      string `json:"zone"`
+	Port      string `json:"port"`
+	Interface string `json:"interface"`
 }
 
 func LoadConfig() (*Config, error) {
 	var zone = flag.String("zone", "", "DNS zone to serve (required)")
 	var port = flag.String("port", "53", "Port to listen on")
+	var iface = flag.String("interface", "", "Interface to bind to (default: all interfaces)")
 	var configFile = flag.String("config", "", "Configuration file path")
 	
 	flag.Parse()
 	
 	config := &Config{
-		Zone: *zone,
-		Port: *port,
+		Zone:      *zone,
+		Port:      *port,
+		Interface: *iface,
 	}
 	
 	if *configFile != "" {

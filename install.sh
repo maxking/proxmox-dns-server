@@ -8,21 +8,25 @@ INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
 
 usage() {
-    echo "Usage: $0 -z <zone> [-p <port>]"
-    echo "Example: $0 -z p01.araj.me -p 53"
+    echo "Usage: $0 -z <zone> [-p <port>] [-i <interface>]"
+    echo "Example: $0 -z p01.araj.me -p 53 -i eth0"
     exit 1
 }
 
 ZONE=""
 PORT="53"
+INTERFACE=""
 
-while getopts "z:p:h" opt; do
+while getopts "z:p:i:h" opt; do
     case ${opt} in
         z )
             ZONE=$OPTARG
             ;;
         p )
             PORT=$OPTARG
+            ;;
+        i )
+            INTERFACE=$OPTARG
             ;;
         h )
             usage
@@ -47,6 +51,9 @@ fi
 echo "Installing Proxmox DNS Server..."
 echo "Zone: $ZONE"
 echo "Port: $PORT"
+if [ -n "$INTERFACE" ]; then
+    echo "Interface: $INTERFACE"
+fi
 
 echo "Fetching latest release information..."
 
@@ -74,6 +81,13 @@ chmod +x /tmp/proxmox-dns-server
 mv /tmp/proxmox-dns-server "$INSTALL_DIR/"
 
 echo "Creating systemd service..."
+
+# Build ExecStart command with optional interface parameter
+EXEC_START="$INSTALL_DIR/proxmox-dns-server -zone $ZONE -port $PORT"
+if [ -n "$INTERFACE" ]; then
+    EXEC_START="$EXEC_START -interface $INTERFACE"
+fi
+
 cat > "$SERVICE_DIR/$SERVICE_NAME.service" << EOF
 [Unit]
 Description=Proxmox DNS Server
@@ -82,7 +96,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/proxmox-dns-server -zone $ZONE -port $PORT
+ExecStart=$EXEC_START
 Restart=always
 RestartSec=5
 User=root

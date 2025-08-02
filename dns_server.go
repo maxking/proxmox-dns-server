@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -10,22 +11,56 @@ import (
 )
 
 type DNSServer struct {
-	zone     string
-	proxmox  *ProxmoxManager
-	server   *dns.Server
-	port     string
+	zone      string
+	proxmox   *ProxmoxManager
+	server    *dns.Server
+	port      string
+	interface string
 }
 
-func NewDNSServer(zone, port string) *DNSServer {
+func NewDNSServer(zone, port, iface string) *DNSServer {
 	return &DNSServer{
-		zone:    zone,
-		proxmox: NewProxmoxManager(),
-		port:    port,
+		zone:      zone,
+		proxmox:   NewProxmoxManager(),
+		port:      port,
+		interface: iface,
 	}
 }
 
 func (ds *DNSServer) Start() error {
-	log.Printf("Starting DNS server for zone %s on port %s", ds.zone, ds.port)
+	var addr string
+	if ds.interface != "" {
+		// Get IP address of the specified interface
+		iface, err := net.InterfaceByName(ds.interface)
+		if err != nil {
+			return fmt.Errorf("failed to find interface %s: %v", ds.interface, err)
+		}
+		
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return fmt.Errorf("failed to get addresses for interface %s: %v", ds.interface, err)
+		}
+		
+		var ip net.IP
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ipNet.IP.To4() != nil {
+					ip = ipNet.IP
+					break
+				}
+			}
+		}
+		
+		if ip == nil {
+			return fmt.Errorf("no IPv4 address found on interface %s", ds.interface)
+		}
+		
+		addr = ip.String() + ":" + ds.port
+		log.Printf("Starting DNS server for zone %s on interface %s (%s:%s)", ds.zone, ds.interface, ip.String(), ds.port)
+	} else {
+		addr = ":" + ds.port
+		log.Printf("Starting DNS server for zone %s on all interfaces (port %s)", ds.zone, ds.port)
+	}
 	
 	if err := ds.proxmox.RefreshInstances(); err != nil {
 		log.Printf("Warning: Failed to refresh instances on startup: %v", err)
@@ -36,7 +71,7 @@ func (ds *DNSServer) Start() error {
 	dns.HandleFunc(ds.zone, ds.handleDNSRequest)
 	
 	ds.server = &dns.Server{
-		Addr: ":" + ds.port,
+		Addr: addr,
 		Net:  "udp",
 	}
 	

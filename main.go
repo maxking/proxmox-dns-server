@@ -29,7 +29,7 @@ func main() {
 		os.Exit(1)
 	}
 	
-	server := NewDNSServer(config.Zone, config.Port)
+	server := NewDNSServer(config.Zone, config.Port, config.Interface)
 	
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
