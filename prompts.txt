@@ -1,0 +1,21 @@
+Create a new Go project which is expected to run as an authoritative DNS server 
+for a provided zone that is given during the startup. The DNS server is meant
+to resolve DNS names based on VM or LXC container name and id both.
+
+Example:
+
+zone p01.araj.me
+
+This server should resolve
+
+102.p01.araj.me to container or VM with id 102.
+name.p01.araj.me to container or VM with id 102.
+
+
+It is expected to run on the same node as proxmox and has
+permission to run `pct` command inside containers or `qm`
+command to get the details about the IP address.
+
+There might be multiple IP address for each of them, we
+need to resolve to only IPv4 address starting with 192.168.
+since they are the only internal addresses.
