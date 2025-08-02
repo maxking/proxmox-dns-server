@@ -31,7 +31,6 @@ jobs:
         direction: upload
         url: ${{ inputs.forgejo }}
         repo: ${{ inputs.to-owner }}/${{ inputs.repo }}
-        release-dir: release
         release-notes: "Uploaded from Forgejo"
         token: ${{ inputs.token }}
         release-dir: dist/
