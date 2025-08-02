@@ -25,11 +25,15 @@ jobs:
 
     - name: Build binary
       run: |
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o proxmox-dns-server-linux-amd64 .
-
+        mkdir -p dist/
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o proxmox-dns-server-linux-amd64 dist/
     - name: Upload binary to release
-      uses: actions/upload-artifact@v4
+      uses: actions/forgejo-release@v2.7.1
       with:
-        name: proxmox-dns-server-linux-amd64
-        path: ./proxmox-dns-server-linux-amd64
-        retention-days: 30
+        direction: upload
+        url: ${{ inputs.forgejo }}
+        repo: ${{ inputs.to-owner }}/${{ inputs.repo }}
+        release-dir: release
+        release-notes: "Uploaded from Forgejo"
+        token: ${{ inputs.token }}
+        release-dir: dist/
