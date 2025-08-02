@@ -25,10 +25,10 @@ jobs:
       run: |
         mkdir -p dist/
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o proxmox-dns-server-linux-amd64 .
-        cp proxmox-dns-server-linux-amd64 dist/
+        mv proxmox-dns-server-linux-amd64 dist/
     - name: Upload binary to release
       uses: actions/forgejo-release@v2.7.1
       with:
         direction: upload
-        release-notes: "Uploaded from Forgejo"
         release-dir: dist/
+        release-notes-assistant: false
