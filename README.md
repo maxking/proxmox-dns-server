@@ -10,6 +10,16 @@ An authoritative DNS server for Proxmox VE that resolves DNS names based on VM a
 - Runs as an authoritative DNS server for a specified zone
 - Automatic refresh of instance information every 30 seconds
 
+## Installation
+
+```
+wget https://git.araj.me/maxking/proxmox-dns-server/raw/branch/master/install.sh
+chmod +x install.sh
+/install.sh -p 5353 -z p01.araj.me
+```
+
+Use the right zone `p01.araj.me` or whatever prefix you want.
+
 ## Usage
 
 ```bash

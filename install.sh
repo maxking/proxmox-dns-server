@@ -49,16 +49,17 @@ echo "Zone: $ZONE"
 echo "Port: $PORT"
 
 echo "Fetching latest release information..."
-LATEST_RELEASE=$(curl -s "https://$REPO_URL/releases/latest" | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
 
-if [ -z "$LATEST_RELEASE" ]; then
+RELEASE_JSON=$(curl -s "https://git.araj.me/api/v1/repos/maxking/proxmox-dns-server/releases/latest")
+LATEST_RELEASE=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | contains("linux-amd64")) | .browser_download_url')
+
+if [ -z "$LATEST_RELEASE" ] || [ -z "$DOWNLOAD_URL" ]; then
     echo "Error: Could not fetch latest release information"
     exit 1
 fi
 
 echo "Latest release: $LATEST_RELEASE"
-
-DOWNLOAD_URL="https://$REPO_URL/releases/download/$LATEST_RELEASE/proxmox-dns-server"
 
 echo "Downloading binary..."
 curl -L -o /tmp/proxmox-dns-server "$DOWNLOAD_URL"
