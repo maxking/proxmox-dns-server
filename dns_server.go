@@ -11,34 +11,34 @@ import (
 )
 
 type DNSServer struct {
-	zone      string
-	proxmox   *ProxmoxManager
-	server    *dns.Server
-	port      string
-	interface string
+	zone          string
+	proxmox       *ProxmoxManager
+	server        *dns.Server
+	port          string
+	bindInterface string
 }
 
 func NewDNSServer(zone, port, iface string) *DNSServer {
 	return &DNSServer{
-		zone:      zone,
-		proxmox:   NewProxmoxManager(),
-		port:      port,
-		interface: iface,
+		zone:          zone,
+		proxmox:       NewProxmoxManager(),
+		port:          port,
+		bindInterface: iface,
 	}
 }
 
 func (ds *DNSServer) Start() error {
 	var addr string
-	if ds.interface != "" {
+	if ds.bindInterface != "" {
 		// Get IP address of the specified interface
-		iface, err := net.InterfaceByName(ds.interface)
+		iface, err := net.InterfaceByName(ds.bindInterface)
 		if err != nil {
-			return fmt.Errorf("failed to find interface %s: %v", ds.interface, err)
+			return fmt.Errorf("failed to find interface %s: %v", ds.bindInterface, err)
 		}
 		
 		addrs, err := iface.Addrs()
 		if err != nil {
-			return fmt.Errorf("failed to get addresses for interface %s: %v", ds.interface, err)
+			return fmt.Errorf("failed to get addresses for interface %s: %v", ds.bindInterface, err)
 		}
 		
 		var ip net.IP
@@ -52,11 +52,11 @@ func (ds *DNSServer) Start() error {
 		}
 		
 		if ip == nil {
-			return fmt.Errorf("no IPv4 address found on interface %s", ds.interface)
+			return fmt.Errorf("no IPv4 address found on interface %s", ds.bindInterface)
 		}
 		
 		addr = ip.String() + ":" + ds.port
-		log.Printf("Starting DNS server for zone %s on interface %s (%s:%s)", ds.zone, ds.interface, ip.String(), ds.port)
+		log.Printf("Starting DNS server for zone %s on interface %s (%s:%s)", ds.zone, ds.bindInterface, ip.String(), ds.port)
 	} else {
 		addr = ":" + ds.port
 		log.Printf("Starting DNS server for zone %s on all interfaces (port %s)", ds.zone, ds.port)
