@@ -21,3 +21,14 @@ need to resolve to only IPv4 address starting with 192.168.
 since they are the only internal addresses.
 ---
 create a single constant string to print to output in main.go
+---
+It seems like after testing it, it works fine for the containers runnin on the node but it doesn't work well for the VMs running. Can you add some debug output to the stdout/err if we are unable ot determine the IP address for a vm. also, maybe log every request to stdout, even if we aren't able to resolve them.
+---
+Also, help me fix this issue
+
+2025/08/02 13:32:16 Warning: Failed to get IP for container 101 (influxdb): exit status 255
+2025/08/02 13:32:16 Warning: Failed to get IP for container 102 (test-ct): exit status 255
+2025/08/02 13:32:17 Warning: Failed to get IP for container 103 (jitsi): exit status 255
+2025/08/02 13:32:18 Warning: Failed to get IP for container 108 (ct-docker-template): exit status 255
+2025/08/02 13:32:19 Warning: Failed to get IP for container 110 (pbs): exit status 255
+2025/08/02 13:32:20 Warning: Failed to get IP for container 113 (clickhouse): exit status 255final
