@@ -3,7 +3,7 @@ name: Auto Tag
 on:
   push:
     branches:
-      - master
+    - foobar
 
 jobs:
   auto-tag:
