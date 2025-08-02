@@ -8,18 +8,24 @@ import (
 	"syscall"
 )
 
+const usageHelp = `Error: %v
+
+Usage:
+  %s -zone <zone> [-port <port>] [-config <config-file>]
+
+Example:
+  %s -zone p01.araj.me
+  %s -zone p01.araj.me -port 5353
+
+This will resolve:
+  102.p01.araj.me -> IP of container/VM with ID 102
+  mycontainer.p01.araj.me -> IP of container/VM named 'mycontainer'
+`
+
 func main() {
 	config, err := LoadConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "\nUsage:\n")
-		fmt.Fprintf(os.Stderr, "  %s -zone <zone> [-port <port>] [-config <config-file>]\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nExample:\n")
-		fmt.Fprintf(os.Stderr, "  %s -zone p01.araj.me\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -zone p01.araj.me -port 5353\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "\nThis will resolve:\n")
-		fmt.Fprintf(os.Stderr, "  102.p01.araj.me -> IP of container/VM with ID 102\n")
-		fmt.Fprintf(os.Stderr, "  mycontainer.p01.araj.me -> IP of container/VM named 'mycontainer'\n")
+		fmt.Fprintf(os.Stderr, usageHelp, err, os.Args[0], os.Args[0], os.Args[0])
 		os.Exit(1)
 	}
 	

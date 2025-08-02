@@ -19,3 +19,5 @@ command to get the details about the IP address.
 There might be multiple IP address for each of them, we
 need to resolve to only IPv4 address starting with 192.168.
 since they are the only internal addresses.
+---
+create a single constant string to print to output in main.go
