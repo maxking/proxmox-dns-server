@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -8,10 +9,16 @@ import (
 	"syscall"
 )
 
+type Config struct {
+	Zone      string
+	Port      string
+	Interface string
+}
+
 const usageHelp = `Error: %v
 
 Usage:
-  %s -zone <zone> [-port <port>] [-config <config-file>]
+  %s -zone <zone> [-port <port>] [-interface <interface>]
 
 Example:
   %s -zone p01.araj.me
@@ -23,13 +30,25 @@ This will resolve:
 `
 
 func main() {
-	config, err := LoadConfig()
-	if err != nil {
+	var zone = flag.String("zone", "", "DNS zone to serve (required)")
+	var port = flag.String("port", "53", "Port to listen on")
+	var iface = flag.String("interface", "", "Interface to bind to (default: all interfaces)")
+	
+	flag.Parse()
+	
+	if *zone == "" {
+		err := fmt.Errorf("zone is required")
 		fmt.Fprintf(os.Stderr, usageHelp, err, os.Args[0], os.Args[0], os.Args[0])
 		os.Exit(1)
 	}
 	
-	server := NewDNSServer(config.Zone, config.Port)
+	config := &Config{
+		Zone:      *zone,
+		Port:      *port,
+		Interface: *iface,
+	}
+	
+	server := NewDNSServer(config.Zone, config.Port, config.Interface)
 	
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
