@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type ProxmoxInstance struct {
@@ -20,17 +21,19 @@ type ProxmoxInstance struct {
 }
 
 type ProxmoxManager struct {
-	instances map[string]ProxmoxInstance
+	instances sync.Map
 }
 
 func NewProxmoxManager() *ProxmoxManager {
-	return &ProxmoxManager{
-		instances: make(map[string]ProxmoxInstance),
-	}
+	return &ProxmoxManager{}
 }
 
 func (pm *ProxmoxManager) RefreshInstances() error {
-	pm.instances = make(map[string]ProxmoxInstance)
+	// Clear all existing entries
+	pm.instances.Range(func(key, value interface{}) bool {
+		pm.instances.Delete(key)
+		return true
+	})
 	
 	if err := pm.loadContainers(); err != nil {
 		return fmt.Errorf("failed to load containers: %v", err)
@@ -92,8 +95,8 @@ func (pm *ProxmoxManager) loadContainers() error {
 			IPv4:    ipv4,
 		}
 		
-		pm.instances[strconv.Itoa(id)] = instance
-		pm.instances[name] = instance
+		pm.instances.Store(strconv.Itoa(id), instance)
+		pm.instances.Store(name, instance)
 	}
 	
 	return nil
@@ -148,8 +151,8 @@ func (pm *ProxmoxManager) loadVMs() error {
 			IPv4:    ipv4,
 		}
 		
-		pm.instances[strconv.Itoa(id)] = instance
-		pm.instances[name] = instance
+		pm.instances.Store(strconv.Itoa(id), instance)
+		pm.instances.Store(name, instance)
 	}
 	
 	return nil
@@ -273,6 +276,10 @@ func (pm *ProxmoxManager) filterIPv4(output string) (string, error) {
 }
 
 func (pm *ProxmoxManager) GetInstanceByIdentifier(identifier string) (ProxmoxInstance, bool) {
-	instance, exists := pm.instances[identifier]
-	return instance, exists
+	value, exists := pm.instances.Load(identifier)
+	if !exists {
+		return ProxmoxInstance{}, false
+	}
+	instance, ok := value.(ProxmoxInstance)
+	return instance, ok
 }
