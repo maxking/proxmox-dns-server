@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,14 +18,20 @@ type DNSServer struct {
 	server        *dns.Server
 	port          string
 	bindInterface string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
-func NewDNSServer(zone, port, iface string) *DNSServer {
+func NewDNSServer(zone, port, iface, ipPrefix string) *DNSServer {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &DNSServer{
 		zone:          zone,
-		proxmox:       NewProxmoxManager(),
+		proxmox:       NewProxmoxManager(ipPrefix),
 		port:          port,
 		bindInterface: iface,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -66,6 +74,7 @@ func (ds *DNSServer) Start() error {
 		log.Printf("Warning: Failed to refresh instances on startup: %v", err)
 	}
 	
+	ds.wg.Add(1)
 	go ds.periodicRefresh()
 	
 	dns.HandleFunc(ds.zone, ds.handleDNSRequest)
@@ -79,6 +88,9 @@ func (ds *DNSServer) Start() error {
 }
 
 func (ds *DNSServer) Stop() error {
+	ds.cancel()
+	ds.wg.Wait()
+	
 	if ds.server != nil {
 		return ds.server.Shutdown()
 	}
@@ -86,12 +98,20 @@ func (ds *DNSServer) Stop() error {
 }
 
 func (ds *DNSServer) periodicRefresh() {
+	defer ds.wg.Done()
+	
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	
-	for range ticker.C {
-		if err := ds.proxmox.RefreshInstances(); err != nil {
-			log.Printf("Failed to refresh instances: %v", err)
+	for {
+		select {
+		case <-ds.ctx.Done():
+			log.Println("Stopping periodic refresh...")
+			return
+		case <-ticker.C:
+			if err := ds.proxmox.RefreshInstances(); err != nil {
+				log.Printf("Failed to refresh instances: %v", err)
+			}
 		}
 	}
 }

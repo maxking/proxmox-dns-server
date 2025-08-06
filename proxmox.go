@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,10 +23,15 @@ type ProxmoxInstance struct {
 
 type ProxmoxManager struct {
 	instances sync.Map
+	ipPrefix  string
 }
 
-func NewProxmoxManager() *ProxmoxManager {
-	return &ProxmoxManager{}
+var validIDRegex = regexp.MustCompile(`^\d+$`)
+
+func NewProxmoxManager(ipPrefix string) *ProxmoxManager {
+	return &ProxmoxManager{
+		ipPrefix: ipPrefix,
+	}
 }
 
 func (pm *ProxmoxManager) RefreshInstances() error {
@@ -36,11 +42,11 @@ func (pm *ProxmoxManager) RefreshInstances() error {
 	})
 	
 	if err := pm.loadContainers(); err != nil {
-		return fmt.Errorf("failed to load containers: %v", err)
+		return fmt.Errorf("failed to load containers: %w", err)
 	}
 	
 	if err := pm.loadVMs(); err != nil {
-		return fmt.Errorf("failed to load VMs: %v", err)
+		return fmt.Errorf("failed to load VMs: %w", err)
 	}
 	
 	return nil
@@ -50,7 +56,7 @@ func (pm *ProxmoxManager) loadContainers() error {
 	cmd := exec.Command("pct", "list")
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to execute pct list: %v", err)
+		return fmt.Errorf("failed to execute pct list: %w", err)
 	}
 	
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
@@ -106,7 +112,7 @@ func (pm *ProxmoxManager) loadVMs() error {
 	cmd := exec.Command("qm", "list")
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to execute qm list: %v", err)
+		return fmt.Errorf("failed to execute qm list: %w", err)
 	}
 	
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
@@ -159,6 +165,9 @@ func (pm *ProxmoxManager) loadVMs() error {
 }
 
 func (pm *ProxmoxManager) getContainerIP(id int) (string, error) {
+	if id <= 0 || id > 9999999 {
+		return "", fmt.Errorf("invalid container ID: %d", id)
+	}
 	idStr := strconv.Itoa(id)
 	
 	// First try hostname -I
@@ -183,6 +192,9 @@ func (pm *ProxmoxManager) getContainerIP(id int) (string, error) {
 }
 
 func (pm *ProxmoxManager) getContainerIPFromConfig(id int) (string, error) {
+	if id <= 0 || id > 999999999 {
+		return "", fmt.Errorf("invalid container ID: %d", id)
+	}
 	cmd := exec.Command("pct", "config", strconv.Itoa(id))
 	output, err := cmd.Output()
 	if err != nil {
@@ -202,7 +214,7 @@ func (pm *ProxmoxManager) getContainerIPFromConfig(id int) (string, error) {
 				if strings.HasPrefix(part, "ip=") {
 					ipWithMask := strings.TrimPrefix(part, "ip=")
 					ip := strings.Split(ipWithMask, "/")[0]
-					if strings.HasPrefix(ip, "192.168.") {
+					if strings.HasPrefix(ip, pm.ipPrefix) {
 						log.Printf("Debug: Container %d - Found IP in config: %s", id, ip)
 						return ip, nil
 					}
@@ -215,6 +227,9 @@ func (pm *ProxmoxManager) getContainerIPFromConfig(id int) (string, error) {
 }
 
 func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
+	if id <= 0 || id > 999999999 {
+		return "", fmt.Errorf("invalid VM ID: %d", id)
+	}
 	cmd := exec.Command("qm", "guest", "cmd", strconv.Itoa(id), "network-get-interfaces")
 	output, err := cmd.Output()
 	if err != nil {
@@ -247,7 +262,7 @@ func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 						if ipType, ok := ipMap["ip-address-type"].(string); ok && ipType == "ipv4" {
 							if ipAddr, ok := ipMap["ip-address"].(string); ok {
 								log.Printf("Debug: VM %d - Found IPv4: %s", id, ipAddr)
-								if strings.HasPrefix(ipAddr, "192.168.") {
+								if strings.HasPrefix(ipAddr, pm.ipPrefix) {
 									log.Printf("Debug: VM %d - Using IPv4: %s", id, ipAddr)
 									return ipAddr, nil
 								}
@@ -268,7 +283,7 @@ func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 func (pm *ProxmoxManager) filterIPv4(output string) (string, error) {
 	ips := strings.Fields(strings.TrimSpace(output))
 	for _, ip := range ips {
-		if net.ParseIP(ip) != nil && strings.HasPrefix(ip, "192.168.") {
+		if net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.ipPrefix) {
 			return ip, nil
 		}
 	}
