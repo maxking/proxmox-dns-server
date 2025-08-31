@@ -37,7 +37,7 @@ func TestNewDNSServer(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
-	
+
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	assert.NotNil(t, server)
@@ -102,12 +102,12 @@ func (m *MockProxmoxManager) WasRefreshed() bool {
 
 func TestDNSServer_resolveA(t *testing.T) {
 	tests := []struct {
-		name            string
-		queryName       string
-		zone            string
-		instances       map[string]ProxmoxInstance
-		expectedIP      string
-		expectedNil     bool
+		name        string
+		queryName   string
+		zone        string
+		instances   map[string]ProxmoxInstance
+		expectedIP  string
+		expectedNil bool
 	}{
 		{
 			name:      "Resolve by ID - container",
@@ -142,10 +142,10 @@ func TestDNSServer_resolveA(t *testing.T) {
 			expectedNil: false,
 		},
 		{
-			name:      "Instance not found",
-			queryName: "notfound.example.com.",
-			zone:      "example.com",
-			instances: map[string]ProxmoxInstance{},
+			name:        "Instance not found",
+			queryName:   "notfound.example.com.",
+			zone:        "example.com",
+			instances:   map[string]ProxmoxInstance{},
 			expectedNil: true,
 		},
 		{
@@ -223,7 +223,7 @@ func TestDNSServer_resolveA(t *testing.T) {
 			}
 
 			server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-			
+
 			// Replace the proxmox manager with our mock
 			mockProxmox := NewMockProxmoxManager()
 			for id, instance := range tt.instances {
@@ -240,7 +240,7 @@ func TestDNSServer_resolveA(t *testing.T) {
 				aRecord, ok := result.(*dns.A)
 				assert.True(t, ok)
 				assert.Equal(t, tt.expectedIP, aRecord.A.String())
-				
+
 				// Check the DNS record header
 				expectedName := tt.queryName
 				if expectedName[len(expectedName)-1] != '.' {
@@ -266,7 +266,7 @@ func TestDNSServer_handleDNSRequest(t *testing.T) {
 	}
 
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-	
+
 	// Setup mock proxmox manager
 	mockProxmox := NewMockProxmoxManager()
 	mockProxmox.AddInstance("102", ProxmoxInstance{
@@ -353,6 +353,88 @@ func TestDNSServer_handleDNSRequest(t *testing.T) {
 			assert.True(t, mockWriter.response.Authoritative)
 		})
 	}
+}
+
+// TestDNSServer_handleDNSRequest_Forwarding tests the DNS forwarding functionality
+func TestDNSServer_handleDNSRequest_Forwarding(t *testing.T) {
+	// Start a mock upstream DNS server
+	upstreamServer, upstreamAddr, err := startMockUpstreamServer()
+	if err != nil {
+		t.Fatalf("Failed to start mock upstream server: %v", err)
+	}
+	defer upstreamServer.Shutdown()
+
+	ctx := context.Background()
+	serverConfig := config.ServerConfig{
+		Zone:            "example.com",
+		Port:            "53",
+		Upstream:        upstreamAddr.String(),
+		IPPrefix:        "192.168.",
+		RefreshInterval: 30 * time.Second,
+		DebugMode:       false,
+	}
+
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
+
+	// Create DNS request for an external domain
+	req := new(dns.Msg)
+	req.SetQuestion("google.com.", dns.TypeA)
+
+	// Mock response writer
+	mockWriter := &MockResponseWriter{}
+
+	// Handle the request
+	server.handleDNSRequest(mockWriter, req)
+
+	// Verify response
+	assert.NotNil(t, mockWriter.response)
+	assert.Equal(t, dns.RcodeSuccess, mockWriter.response.Rcode)
+	assert.Len(t, mockWriter.response.Answer, 1)
+	aRecord, ok := mockWriter.response.Answer[0].(*dns.A)
+	assert.True(t, ok)
+	assert.Equal(t, "8.8.8.8", aRecord.A.String())
+}
+
+// startMockUpstreamServer starts a mock DNS server for testing forwarding
+func startMockUpstreamServer() (*dns.Server, net.Addr, error) {
+	handler := dns.NewServeMux()
+	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		if r.Question[0].Name == "google.com." && r.Question[0].Qtype == dns.TypeA {
+			m.Answer = append(m.Answer, &dns.A{
+				Hdr: dns.RR_Header{Name: "google.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600},
+				A:   net.ParseIP("8.8.8.8"),
+			})
+		}
+		w.WriteMsg(m)
+	})
+
+	server := &dns.Server{
+		Addr:    "127.0.0.1:0",
+		Net:     "udp",
+		Handler: handler,
+	}
+
+	// Use a channel to signal when the server is ready
+	ready := make(chan struct{})
+	server.NotifyStartedFunc = func() {
+		close(ready)
+	}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil {
+			// Don't log error on graceful shutdown
+			// if err != dns. {
+			// 	log.Printf("Mock upstream server error: %v", err)
+			// }
+		}
+	}()
+
+	// Wait for the server to start
+	<-ready
+
+	return server, server.PacketConn.LocalAddr(), nil
 }
 
 // MockResponseWriter implements dns.ResponseWriter for testing
@@ -472,7 +554,7 @@ func TestDNSServer_periodicRefresh(t *testing.T) {
 	}
 
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-	
+
 	// Replace with mock
 	mockProxmox := NewMockProxmoxManager()
 	server.proxmox = mockProxmox
@@ -513,7 +595,7 @@ func TestDNSServer_Integration(t *testing.T) {
 	}
 
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-	
+
 	// Replace with mock that has test data
 	mockProxmox := NewMockProxmoxManager()
 	mockProxmox.AddInstance("100", ProxmoxInstance{
@@ -566,7 +648,7 @@ func BenchmarkDNSServer_resolveA(b *testing.B) {
 	}
 
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-	
+
 	// Setup mock with test data
 	mockProxmox := NewMockProxmoxManager()
 	mockProxmox.AddInstance("102", ProxmoxInstance{
@@ -596,7 +678,7 @@ func BenchmarkDNSServer_handleDNSRequest(b *testing.B) {
 	}
 
 	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
-	
+
 	// Setup mock
 	mockProxmox := NewMockProxmoxManager()
 	mockProxmox.AddInstance("102", ProxmoxInstance{

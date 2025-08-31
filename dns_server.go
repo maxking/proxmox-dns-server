@@ -112,7 +112,7 @@ func (ds *DNSServer) Start() error {
 	ds.wg.Add(1)
 	go ds.periodicRefresh()
 
-	dns.HandleFunc(ds.config.Zone, ds.handleDNSRequest)
+	dns.HandleFunc(".", ds.handleDNSRequest)
 
 	ds.server = &dns.Server{
 		Addr: addr,
@@ -176,9 +176,9 @@ func (ds *DNSServer) periodicRefresh() {
 	}
 }
 
-// handleDNSRequest processes incoming DNS queries and responds with
-// A records for matching Proxmox containers and VMs.
-// It only handles A record queries for the configured DNS zone.
+// handleDNSRequest processes incoming DNS queries.
+// If the query is for the configured zone, it resolves A records for Proxmox instances.
+// Otherwise, it forwards the query to an upstream DNS server, if configured.
 func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(r)
@@ -189,6 +189,7 @@ func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, q := range r.Question {
 		log.Printf("DNS Request from %s: %s %s", clientAddr, dns.TypeToString[q.Qtype], q.Name)
 
+		// Handle local zone queries
 		if q.Qtype == dns.TypeA && strings.HasSuffix(q.Name, ds.config.Zone+".") {
 			if answer := ds.resolveA(q.Name); answer != nil {
 				m.Answer = append(m.Answer, answer)
@@ -196,7 +197,17 @@ func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 				log.Printf("DNS Request failed: No record found for %s", q.Name)
 				m.SetRcode(r, dns.RcodeNameError)
 			}
+		} else if ds.config.Upstream != "" {
+			// Forward other queries to the upstream server
+			resp, err := ds.forwardQuery(r)
+			if err != nil {
+				log.Printf("Failed to forward query for %s: %v", q.Name, err)
+				m.SetRcode(r, dns.RcodeServerFailure)
+			} else {
+				m = resp
+			}
 		} else {
+			// No upstream server configured, reject non-local queries
 			log.Printf("DNS Request failed: Unsupported query type %s or wrong zone for %s", dns.TypeToString[q.Qtype], q.Name)
 			m.SetRcode(r, dns.RcodeNameError)
 		}
@@ -204,6 +215,14 @@ func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	w.WriteMsg(m)
 }
+
+// forwardQuery sends a DNS query to the configured upstream server and returns the response.
+func (ds *DNSServer) forwardQuery(r *dns.Msg) (*dns.Msg, error) {
+	c := new(dns.Client)
+	resp, _, err := c.Exchange(r, ds.config.Upstream)
+	return resp, err
+}
+
 
 // resolveA resolves a DNS A record query for a given name.
 // It attempts to match the name to a Proxmox container or VM
