@@ -13,9 +13,9 @@ import (
 )
 
 // Helper function to create a test logger
-func newTestLogger() *zap.Logger {
+func newTestLogger() *zap.SugaredLogger {
 	logger, _ := zap.NewDevelopment()
-	return logger
+	return logger.Sugar()
 }
 
 func TestProxmoxErrorConstants(t *testing.T) {

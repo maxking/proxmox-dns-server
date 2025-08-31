@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	logger *zap.Logger
+	logger *zap.SugaredLogger
 )
 
 // Application-level error variables
@@ -161,21 +161,22 @@ func main() {
 	if cfg.Server.DebugMode {
 		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	}
-	logger, err := logConfig.Build()
+	baseLogger, err := logConfig.Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
+	logger = baseLogger.Sugar()
 	defer logger.Sync()
 
 	// Validate server configuration
 	if err := cfg.Server.Validate(); err != nil {
-		logger.Fatal("Server configuration validation failed", zap.Error(err))
+		logger.Fatalw("Server configuration validation failed", "error", err)
 	}
 
 	// Validate Proxmox configuration
 	if err := cfg.Proxmox.Validate(); err != nil {
-		logger.Fatal("Proxmox configuration validation failed", zap.Error(err))
+		logger.Fatalw("Proxmox configuration validation failed", "error", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,15 +200,15 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		logger.Info("Starting Proxmox DNS server",
-			zap.String("zone", cfg.Server.Zone),
-			zap.String("port", cfg.Server.Port),
+		logger.Infow("Starting Proxmox DNS server",
+			"zone", cfg.Server.Zone,
+			"port", cfg.Server.Port,
 		)
 		if err := server.Start(); err != nil {
-			logger.Error("DNS server startup failed",
-				zap.String("zone", cfg.Server.Zone),
-				zap.String("port", cfg.Server.Port),
-				zap.Error(err),
+			logger.Errorw("DNS server startup failed",
+				"zone", cfg.Server.Zone,
+				"port", cfg.Server.Port,
+				"error", err,
 			)
 			cancel()
 		}
@@ -227,7 +228,7 @@ func main() {
 	go func() {
 		defer close(done)
 		if err := server.Stop(); err != nil {
-			logger.Error("Server shutdown error", zap.Error(err))
+			logger.Errorw("Server shutdown error", "error", err)
 		}
 	}()
 
