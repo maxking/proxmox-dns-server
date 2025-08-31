@@ -1,10 +1,10 @@
-// Package main implements a DNS server for Proxmox VE environments
+// Package dns implements a DNS server for Proxmox VE environments
 // that resolves container and VM names to their IP addresses.
 //
 // The server automatically discovers Proxmox containers and VMs,
 // caches their information, and provides DNS A record responses
 // for queries matching the configured zone.
-package main
+package dns
 
 import (
 	"context"
@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-
 	"proxmox-dns-server/pkg/config"
+	"proxmox-dns-server/pkg/proxmox"
 )
 
 // DNS server specific error variables
@@ -33,27 +33,32 @@ var (
 // ProxmoxManagerInterface defines the interface for Proxmox instance management
 type ProxmoxManagerInterface interface {
 	RefreshInstances() error
-	GetInstanceByIdentifier(identifier string) (ProxmoxInstance, bool)
+	GetInstanceByIdentifier(identifier string) (proxmox.ProxmoxInstance, bool)
 }
 
-// DNSServer represents the main DNS server that handles incoming DNS queries
+// Server represents the main DNS server that handles incoming DNS queries
 // and resolves them to Proxmox container and VM IP addresses.
-type DNSServer struct {
+type Server struct {
 	config  config.ServerConfig      // Server configuration
 	proxmox ProxmoxManagerInterface // Manager for Proxmox instance data
-	server  *dns.Server              // Underlying DNS server
-	ctx     context.Context          // Context for graceful shutdown
-	cancel  context.CancelFunc       // Cancel function for context
-	wg      sync.WaitGroup           // WaitGroup for managing goroutines
+	server  *dns.Server             // Underlying DNS server
+	ctx     context.Context         // Context for graceful shutdown
+	cancel  context.CancelFunc      // Cancel function for context
+	wg      sync.WaitGroup          // WaitGroup for managing goroutines
 }
 
-// NewDNSServer creates a new DNS server instance with the given configuration.
+// NewServer creates a new DNS server instance with the given configuration.
 // It initializes the Proxmox manager and sets up the context for graceful shutdown.
-func NewDNSServer(parentCtx context.Context, config config.ServerConfig, proxmoxConfig config.ProxmoxConfig) *DNSServer {
+func NewServer(parentCtx context.Context, cfg config.ServerConfig) *Server {
 	ctx, cancel := context.WithCancel(parentCtx)
-	return &DNSServer{
-		config:  config,
-		proxmox: NewProxmoxManager(proxmoxConfig),
+	proxmoxConfig := config.ProxmoxConfig{
+		IPPrefix:       cfg.IPPrefix,
+		CommandTimeout: 30 * time.Second,
+		DebugMode:      cfg.DebugMode,
+	}
+	return &Server{
+		config:  cfg,
+		proxmox: proxmox.NewManager(proxmoxConfig),
 		ctx:     ctx,
 		cancel:  cancel,
 	}
@@ -63,7 +68,7 @@ func NewDNSServer(parentCtx context.Context, config config.ServerConfig, proxmox
 // It configures the network binding, initializes instance data,
 // and starts the periodic refresh routine. The server runs until
 // the context is cancelled or an error occurs.
-func (ds *DNSServer) Start() error {
+func (ds *Server) Start() error {
 	// Check if context is already cancelled
 	select {
 	case <-ds.ctx.Done():
@@ -141,7 +146,7 @@ func (ds *DNSServer) Start() error {
 // Stop gracefully shuts down the DNS server.
 // It cancels the context, waits for all goroutines to finish,
 // and then stops the DNS server.
-func (ds *DNSServer) Stop() error {
+func (ds *Server) Stop() error {
 	ds.cancel()
 	ds.wg.Wait()
 
@@ -155,7 +160,7 @@ func (ds *DNSServer) Stop() error {
 
 // periodicRefresh runs in a separate goroutine and periodically refreshes
 // the Proxmox instance data at the configured interval.
-func (ds *DNSServer) periodicRefresh() {
+func (ds *Server) periodicRefresh() {
 	defer ds.wg.Done()
 
 	ticker := time.NewTicker(ds.config.RefreshInterval)
@@ -179,7 +184,7 @@ func (ds *DNSServer) periodicRefresh() {
 // handleDNSRequest processes incoming DNS queries and responds with
 // A records for matching Proxmox containers and VMs.
 // It only handles A record queries for the configured DNS zone.
-func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+func (ds *Server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Authoritative = true
@@ -209,7 +214,7 @@ func (ds *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 // It attempts to match the name to a Proxmox container or VM
 // by ID or name, returning the corresponding IP address.
 // Returns nil if no matching instance is found or has no IP.
-func (ds *DNSServer) resolveA(name string) dns.RR {
+func (ds *Server) resolveA(name string) dns.RR {
 	// Pre-compute zone suffix to avoid repeated string concatenation
 	zoneSuffix := "." + ds.config.Zone
 
