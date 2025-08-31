@@ -33,6 +33,7 @@ type ServerConfig struct {
 	Zone            string        `json:"zone"`
 	Port            string        `json:"port"`
 	BindInterface   string        `json:"interface"`
+	Upstream        string        `json:"upstream"`
 	IPPrefix        string        `json:"ip_prefix"`
 	RefreshInterval time.Duration `json:"refresh_interval"`
 	DebugMode       bool          `json:"debug"`

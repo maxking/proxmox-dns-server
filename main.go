@@ -80,6 +80,7 @@ func main() {
 	var zone = flag.String("zone", "", "DNS zone to serve")
 	var port = flag.String("port", "53", "Port to listen on")
 	var iface = flag.String("interface", "", "Interface to bind to")
+	var upstream = flag.String("upstream", "", "Upstream DNS server")
 	var ipPrefix = flag.String("ip-prefix", "192.168.", "IP prefix filter")
 	var debug = flag.Bool("debug", false, "Enable debug logging")
 
@@ -116,6 +117,9 @@ func main() {
 	}
 	if *iface != "" {
 		cfg.Server.BindInterface = *iface
+	}
+	if *upstream != "" {
+		cfg.Server.Upstream = *upstream
 	}
 	if *ipPrefix != "192.168." {
 		cfg.Server.IPPrefix = *ipPrefix
