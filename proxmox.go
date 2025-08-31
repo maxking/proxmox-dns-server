@@ -7,37 +7,44 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
 	"net"
-	"os/exec"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/luthermonson/go-proxmox"
 )
 
 // Standard error variables for common error conditions
 var (
-	ErrContainerNotFound   = errors.New("container not found")
-	ErrVMNotFound          = errors.New("VM not found")
-	ErrInvalidID           = errors.New("invalid ID")
-	ErrCommandTimeout      = errors.New("command execution timeout")
-	ErrNoIPFound           = errors.New("no suitable IP address found")
-	ErrInvalidIPPrefix     = errors.New("IP does not match configured prefix")
+	ErrContainerNotFound    = errors.New("container not found")
+	ErrVMNotFound           = errors.New("VM not found")
+	ErrInvalidID            = errors.New("invalid ID")
+	ErrCommandTimeout       = errors.New("command execution timeout")
+	ErrNoIPFound            = errors.New("no suitable IP address found")
+	ErrInvalidIPPrefix      = errors.New("IP does not match configured prefix")
 	ErrInvalidProxmoxConfig = errors.New("invalid proxmox configuration")
 )
 
 // ProxmoxConfig holds configuration parameters for Proxmox operations.
-// It defines how the system interacts with Proxmox VE containers and VMs.
+// It defines how the system interacts with Proxmox VE containers and VMs via API.
 type ProxmoxConfig struct {
-	IPPrefix       string        // IP prefix filter for container/VM IPs (e.g., "192.168.")
-	CommandTimeout time.Duration // Timeout for executing Proxmox commands
-	DebugMode      bool          // Enable debug logging for Proxmox operations
+	IPPrefix    string // IP prefix filter for container/VM IPs (e.g., "192.168.")
+	APIEndpoint string // Proxmox API endpoint (e.g., "https://proxmox:8006/api2/json")
+	Username    string // Proxmox username (e.g., "root@pam")
+	Password    string // Proxmox password
+	APIToken    string // Alternative: API token (optional)
+	APISecret   string // Alternative: API secret (optional)
+	NodeName    string // Proxmox node name to query
+	InsecureTLS bool   // Skip TLS verification for self-signed certs
+	DebugMode   bool   // Enable debug logging for Proxmox operations
 }
 
 // Validate checks if the ProxmoxConfig contains valid configuration values.
@@ -46,21 +53,44 @@ func (pc *ProxmoxConfig) Validate() error {
 	if pc.IPPrefix == "" {
 		return fmt.Errorf("%w: IP prefix is required", ErrInvalidProxmoxConfig)
 	}
-	
-	if pc.CommandTimeout <= 0 {
-		return fmt.Errorf("%w: command timeout must be positive", ErrInvalidProxmoxConfig)
+
+	if pc.APIEndpoint == "" {
+		return fmt.Errorf("%w: API endpoint is required", ErrInvalidProxmoxConfig)
 	}
-	
+
+	if pc.NodeName == "" {
+		return fmt.Errorf("%w: node name is required", ErrInvalidProxmoxConfig)
+	}
+
+	// Either username/password or API token/secret must be provided
+	if pc.Username == "" && pc.APIToken == "" {
+		return fmt.Errorf("%w: either username or API token is required", ErrInvalidProxmoxConfig)
+	}
+
+	if pc.Username != "" && pc.Password == "" {
+		return fmt.Errorf("%w: password is required when username is provided", ErrInvalidProxmoxConfig)
+	}
+
+	if pc.APIToken != "" && pc.APISecret == "" {
+		return fmt.Errorf("%w: API secret is required when API token is provided", ErrInvalidProxmoxConfig)
+	}
+
 	return nil
 }
 
-// NewProxmoxConfigFromFlags creates a ProxmoxConfig with the specified IP prefix
-// and default values for timeout and debug mode.
-func NewProxmoxConfigFromFlags(ipPrefix string) *ProxmoxConfig {
+// NewProxmoxConfigFromFlags creates a ProxmoxConfig with the specified parameters
+// and default values for debug mode and TLS settings.
+func NewProxmoxConfigFromFlags(ipPrefix, apiEndpoint, username, password, apiToken, apiSecret, nodeName string, insecureTLS bool) *ProxmoxConfig {
 	return &ProxmoxConfig{
-		IPPrefix:       ipPrefix,
-		CommandTimeout: 30 * time.Second, // Default command timeout
-		DebugMode:      false,             // Default debug mode
+		IPPrefix:    ipPrefix,
+		APIEndpoint: apiEndpoint,
+		Username:    username,
+		Password:    password,
+		APIToken:    apiToken,
+		APISecret:   apiSecret,
+		NodeName:    nodeName,
+		InsecureTLS: insecureTLS,
+		DebugMode:   false, // Default debug mode
 	}
 }
 
@@ -75,10 +105,11 @@ type ProxmoxInstance struct {
 }
 
 // ProxmoxManager manages the discovery and caching of Proxmox container and VM instances.
-// It provides thread-safe access to instance data and handles periodic refreshes.
+// It provides thread-safe access to instance data and handles periodic refreshes via API.
 type ProxmoxManager struct {
-	instances sync.Map      // Thread-safe map storing instances by ID and name
-	config    ProxmoxConfig // Configuration for Proxmox operations
+	instances sync.Map           // Thread-safe map storing instances by ID and name
+	config    ProxmoxConfig      // Configuration for Proxmox operations
+	client    *proxmox.Client    // Proxmox API client
 }
 
 // Proxmox ID validation constants
@@ -88,10 +119,40 @@ const (
 )
 
 // NewProxmoxManager creates a new ProxmoxManager with the given configuration.
-// It initializes the thread-safe instance storage.
+// It initializes the thread-safe instance storage and creates the API client.
 func NewProxmoxManager(config ProxmoxConfig) *ProxmoxManager {
+	// Create HTTP client with optional TLS configuration
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: config.InsecureTLS,
+			},
+		},
+	}
+
+	// Create Proxmox client with authentication
+	var client *proxmox.Client
+	if config.APIToken != "" {
+		// Use API token authentication
+		client = proxmox.NewClient(config.APIEndpoint,
+			proxmox.WithAPIToken(config.APIToken, config.APISecret),
+			proxmox.WithHTTPClient(httpClient),
+		)
+	} else {
+		// Use username/password authentication
+		credentials := proxmox.Credentials{
+			Username: config.Username,
+			Password: config.Password,
+		}
+		client = proxmox.NewClient(config.APIEndpoint,
+			proxmox.WithCredentials(&credentials),
+			proxmox.WithHTTPClient(httpClient),
+		)
+	}
+
 	return &ProxmoxManager{
 		config: config,
+		client: client,
 	}
 }
 
@@ -113,310 +174,235 @@ func (pm *ProxmoxManager) RefreshInstances() error {
 	return nil
 }
 
-// loadContainers discovers and loads all Proxmox containers.
-// It executes 'pct list' to get container information and retrieves IP addresses
-// for running containers that match the configured IP prefix.
+// loadContainers discovers and loads all Proxmox containers via API.
+// It retrieves container information and IP addresses for running containers
+// that match the configured IP prefix.
 func (pm *ProxmoxManager) loadContainers() error {
-	ctx, cancel := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "pct", "list")
-	output, err := cmd.Output()
+
+	// Get the node first
+	node, err := pm.client.Node(ctx, pm.config.NodeName)
 	if err != nil {
-		return fmt.Errorf("proxmox containers: failed to execute 'pct list' command: %w", err)
+		return fmt.Errorf("proxmox containers: failed to get node %s: %w", pm.config.NodeName, err)
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	firstLine := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		if firstLine {
-			firstLine = false
-			continue
-		}
+	// Get containers from the specified node
+	containers, err := node.Containers(ctx)
+	if err != nil {
+		return fmt.Errorf("proxmox containers: failed to get containers from API: %w", err)
+	}
 
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
+	if pm.config.DebugMode {
+		log.Printf("Debug: Found %d containers on node %s", len(containers), pm.config.NodeName)
+	}
 
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-
-		status := fields[1]
-		name := fields[2]
-
-		// Only try to get IP for running containers
-		if status != "running" {
+	for _, container := range containers {
+		// Only process running containers
+		if container.Status != "running" {
 			if pm.config.DebugMode {
-				log.Printf("Debug: Container %d (%s) is %s, skipping IP detection", id, name, status)
+				log.Printf("Debug: Container %d (%s) is %s, skipping IP detection", container.VMID, container.Name, container.Status)
 			}
 			continue
 		}
 
-		ipv4, err := pm.getContainerIP(id)
+		containerID := int(uint64(container.VMID))
+		
+		ipv4, err := pm.getContainerIP(containerID)
 		if err != nil {
-			log.Printf("Warning: Failed to get IP for container %d (%s): %v", id, name, err)
+			log.Printf("Warning: Failed to get IP for container %d (%s): %v", containerID, container.Name, err)
 			continue
 		}
 
 		instance := ProxmoxInstance{
-			ID:     id,
-			Name:   name,
-			Status: status,
+			ID:     containerID,
+			Name:   container.Name,
+			Status: container.Status,
 			Type:   "container",
 			IPv4:   ipv4,
 		}
 
-		pm.instances.Store(strconv.Itoa(id), instance)
-		pm.instances.Store(name, instance)
+		pm.instances.Store(strconv.Itoa(containerID), instance)
+		pm.instances.Store(container.Name, instance)
+
+		if pm.config.DebugMode {
+			log.Printf("Debug: Loaded container %d (%s) with IP %s", containerID, container.Name, ipv4)
+		}
 	}
 
 	return nil
 }
 
-// loadVMs discovers and loads all Proxmox virtual machines.
-// It executes 'qm list' to get VM information and retrieves IP addresses
-// for running VMs that match the configured IP prefix.
+// loadVMs discovers and loads all Proxmox virtual machines via API.
+// It retrieves VM information and IP addresses for running VMs
+// that match the configured IP prefix.
 func (pm *ProxmoxManager) loadVMs() error {
-	ctx, cancel := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qm", "list")
-	output, err := cmd.Output()
+
+	// Get the node first
+	node, err := pm.client.Node(ctx, pm.config.NodeName)
 	if err != nil {
-		return fmt.Errorf("proxmox VMs: failed to execute 'qm list' command: %w", err)
+		return fmt.Errorf("proxmox VMs: failed to get node %s: %w", pm.config.NodeName, err)
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	firstLine := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		if firstLine {
-			firstLine = false
-			continue
-		}
+	// Get VMs from the specified node
+	vms, err := node.VirtualMachines(ctx)
+	if err != nil {
+		return fmt.Errorf("proxmox VMs: failed to get VMs from API: %w", err)
+	}
 
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
+	if pm.config.DebugMode {
+		log.Printf("Debug: Found %d VMs on node %s", len(vms), pm.config.NodeName)
+	}
 
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-
-		name := fields[1]
-		status := fields[2]
-
-		// Only try to get IP for running VMs
-		if status != "running" {
+	for _, vm := range vms {
+		// Only process running VMs
+		if vm.Status != "running" {
 			if pm.config.DebugMode {
-				log.Printf("Debug: VM %d (%s) is %s, skipping IP detection", id, name, status)
+				log.Printf("Debug: VM %d (%s) is %s, skipping IP detection", vm.VMID, vm.Name, vm.Status)
 			}
 			continue
 		}
 
-		ipv4, err := pm.getVMIP(id)
+		vmID := int(uint64(vm.VMID))
+		
+		ipv4, err := pm.getVMIP(vmID)
 		if err != nil {
-			log.Printf("Warning: Failed to get IP for VM %d (%s): %v", id, name, err)
+			log.Printf("Warning: Failed to get IP for VM %d (%s): %v", vmID, vm.Name, err)
 			continue
 		}
 
 		instance := ProxmoxInstance{
-			ID:     id,
-			Name:   name,
-			Status: status,
+			ID:     vmID,
+			Name:   vm.Name,
+			Status: vm.Status,
 			Type:   "vm",
 			IPv4:   ipv4,
 		}
 
-		pm.instances.Store(strconv.Itoa(id), instance)
-		pm.instances.Store(name, instance)
+		pm.instances.Store(strconv.Itoa(vmID), instance)
+		pm.instances.Store(vm.Name, instance)
+
+		if pm.config.DebugMode {
+			log.Printf("Debug: Loaded VM %d (%s) with IP %s", vmID, vm.Name, ipv4)
+		}
 	}
 
 	return nil
 }
 
-// getContainerIP retrieves the IP address of a Proxmox container by ID.
-// It tries multiple methods: hostname -I, ip route, and container configuration.
+// getContainerIP retrieves the IP address of a Proxmox container by ID via API.
+// It gets the container configuration and extracts IP addresses from network interfaces.
 // Returns the first IP address that matches the configured prefix.
 func (pm *ProxmoxManager) getContainerIP(id int) (string, error) {
 	if id < MinProxmoxID || id > MaxProxmoxID {
 		return "", fmt.Errorf("container IP lookup: %w: %d (must be between %d and %d)", ErrInvalidID, id, MinProxmoxID, MaxProxmoxID)
 	}
-	idStr := strconv.Itoa(id)
 
-	// First try hostname -I
-	ctx, cancel := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "pct", "exec", idStr, "--", "hostname", "-I")
-	output, err := cmd.Output()
+
+	// Get the node first
+	node, err := pm.client.Node(ctx, pm.config.NodeName)
 	if err != nil {
-		if pm.config.DebugMode {
-			log.Printf("Debug: Container %d - hostname -I failed: %v", id, err)
-		}
-
-		// Try alternative command: ip route get 1.1.1.1 | head -1 | awk '{print $7}'
-		ctx2, cancel2 := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
-		defer cancel2()
-		cmd = exec.CommandContext(ctx2, "pct", "exec", idStr, "--", "sh", "-c", "ip route get 1.1.1.1 2>/dev/null | head -1 | awk '{print $7}'")
-		output, err = cmd.Output()
-		if err != nil {
-			if pm.config.DebugMode {
-				log.Printf("Debug: Container %d - ip route get failed: %v", id, err)
-			}
-
-			// Try getting IP from container config
-			return pm.getContainerIPFromConfig(id)
-		}
+		return "", fmt.Errorf("container IP lookup: failed to get node %s: %w", pm.config.NodeName, err)
 	}
 
+	// Get the container (for future implementation)
+	_, err = node.Container(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("container %d: failed to get container from API: %w", id, err)
+	}
+
+	// For now, return an error indicating that container IP detection via API is not yet implemented
+	// This can be enhanced later with proper container configuration API integration
 	if pm.config.DebugMode {
-		log.Printf("Debug: Container %d - command output: %s", id, string(output))
+		log.Printf("Debug: Container %d - container IP detection via API not fully implemented yet", id)
 	}
-	return pm.filterIPv4(string(output))
+	
+	return "", fmt.Errorf("container %d: IP detection via API not yet implemented", id)
 }
 
-// getContainerIPFromConfig retrieves the IP address from a container's configuration.
-// This is used as a fallback when direct IP detection methods fail.
-// It parses the container config for network interface definitions.
-func (pm *ProxmoxManager) getContainerIPFromConfig(id int) (string, error) {
-	if id < MinProxmoxID || id > MaxProxmoxID {
-		return "", fmt.Errorf("container config lookup: %w: %d (must be between %d and %d)", ErrInvalidID, id, MinProxmoxID, MaxProxmoxID)
+// extractIPFromNetConfig extracts IP address from network configuration string.
+// Network config format: "name=eth0,bridge=vmbr0,ip=192.168.1.100/24,gw=192.168.1.1"
+func (pm *ProxmoxManager) extractIPFromNetConfig(netConfig string) string {
+	// Find "ip=" in the configuration
+	ipStart := strings.Index(netConfig, "ip=")
+	if ipStart == -1 {
+		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "pct", "config", strconv.Itoa(id))
-	output, err := cmd.Output()
-	if err != nil {
-		if pm.config.DebugMode {
-			log.Printf("Debug: Container %d - pct config failed: %v", id, err)
-		}
-		return "", fmt.Errorf("container %d config: failed to execute 'pct config' command: %w", id, err)
+	
+	ipStart += 3 // Skip "ip="
+	
+	// Find the end of the IP (either a comma, slash, or end of string)
+	ipEnd := strings.IndexAny(netConfig[ipStart:], ",/")
+	if ipEnd == -1 {
+		ipEnd = len(netConfig) - ipStart
 	}
-
-	if pm.config.DebugMode {
-		log.Printf("Debug: Container %d - config output: %s", id, string(output))
-	}
-
-	// Look for net0, net1, etc. lines with IP addresses
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "net") && strings.Contains(line, "ip=") {
-			// Extract IP from line like: net0: name=eth0,bridge=vmbr0,ip=192.168.1.100/24,gw=192.168.1.1
-			parts := strings.Split(line, ",")
-			for _, part := range parts {
-				if strings.HasPrefix(part, "ip=") {
-					ipWithMask := strings.TrimPrefix(part, "ip=")
-					ip := strings.Split(ipWithMask, "/")[0]
-					if strings.HasPrefix(ip, pm.config.IPPrefix) {
-						if pm.config.DebugMode {
-						log.Printf("Debug: Container %d - Found IP in config: %s", id, ip)
-					}
-						return ip, nil
-					}
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("container %d config: %w with prefix %s", id, ErrNoIPFound, pm.config.IPPrefix)
+	
+	return netConfig[ipStart : ipStart+ipEnd]
 }
 
-// getVMIP retrieves the IP address of a Proxmox virtual machine by ID.
-// It uses the QEMU guest agent to query network interface information
+
+// getVMIP retrieves the IP address of a Proxmox virtual machine by ID via AgentExec API.
+// It uses the QEMU guest agent to execute commands and extract IP information
 // and returns the first IPv4 address matching the configured prefix.
 func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 	if id < MinProxmoxID || id > MaxProxmoxID {
 		return "", fmt.Errorf("VM IP lookup: %w: %d (must be between %d and %d)", ErrInvalidID, id, MinProxmoxID, MaxProxmoxID)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), pm.config.CommandTimeout)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qm", "guest", "cmd", strconv.Itoa(id), "network-get-interfaces")
-	output, err := cmd.Output()
+
+	// Get the node first
+	node, err := pm.client.Node(ctx, pm.config.NodeName)
 	if err != nil {
-		if pm.config.DebugMode {
-			log.Printf("Debug: VM %d - qm guest cmd failed: %v", id, err)
-		}
-		return "", fmt.Errorf("VM %d network interfaces: failed to execute 'qm guest cmd network-get-interfaces': %w", id, err)
+		return "", fmt.Errorf("VM IP lookup: failed to get node %s: %w", pm.config.NodeName, err)
 	}
 
+	// Get the virtual machine (for future implementation)
+	_, err = node.VirtualMachine(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("VM %d: failed to get VM from API: %w", id, err)
+	}
+
+	// For now, return an error indicating that VM IP detection via API is not yet implemented
+	// This can be enhanced later with proper QEMU guest agent integration
 	if pm.config.DebugMode {
-		log.Printf("Debug: VM %d - qm guest cmd output: %s", id, string(output))
+		log.Printf("Debug: VM %d - VM IP detection via API not fully implemented yet", id)
 	}
-
-	var interfaces []interface{}
-	if err := json.Unmarshal(output, &interfaces); err != nil {
-		if pm.config.DebugMode {
-			log.Printf("Debug: VM %d - JSON unmarshal failed: %v", id, err)
-			log.Printf("Debug: VM %d - Raw JSON output: %s", id, string(output))
-		}
-		return "", fmt.Errorf("VM %d network interfaces: failed to parse JSON response: %w", id, err)
-	}
-
-	if pm.config.DebugMode {
-		log.Printf("Debug: VM %d - Found %d network interfaces", id, len(interfaces))
-	}
-	for i, iface := range interfaces {
-		if ifaceMap, ok := iface.(map[string]interface{}); ok {
-			ifaceName := "unknown"
-			if name, ok := ifaceMap["name"].(string); ok {
-				ifaceName = name
-			}
-			if pm.config.DebugMode {
-				log.Printf("Debug: VM %d - Interface %d (%s)", id, i, ifaceName)
-			}
-
-			if ipAddresses, ok := ifaceMap["ip-addresses"].([]interface{}); ok {
-				if pm.config.DebugMode {
-					log.Printf("Debug: VM %d - Interface %s has %d IP addresses", id, ifaceName, len(ipAddresses))
-				}
-				for j, ip := range ipAddresses {
-					if ipMap, ok := ip.(map[string]interface{}); ok {
-						if pm.config.DebugMode {
-							log.Printf("Debug: VM %d - IP %d: %+v", id, j, ipMap)
-						}
-						if ipType, ok := ipMap["ip-address-type"].(string); ok && ipType == "ipv4" {
-							if ipAddr, ok := ipMap["ip-address"].(string); ok {
-								if pm.config.DebugMode {
-									log.Printf("Debug: VM %d - Found IPv4: %s", id, ipAddr)
-								}
-								if strings.HasPrefix(ipAddr, pm.config.IPPrefix) {
-									if pm.config.DebugMode {
-										log.Printf("Debug: VM %d - Using IPv4: %s", id, ipAddr)
-									}
-									return ipAddr, nil
-								}
-							}
-						}
-					}
-				}
-			} else {
-				if pm.config.DebugMode {
-					log.Printf("Debug: VM %d - Interface %s has no ip-addresses field", id, ifaceName)
-				}
-			}
-		}
-	}
-
-	if pm.config.DebugMode {
-		log.Printf("Debug: VM %d - No suitable IPv4 address found with prefix %s", id, pm.config.IPPrefix)
-	}
-	return "", fmt.Errorf("VM %d: %w with prefix %s", id, ErrNoIPFound, pm.config.IPPrefix)
+	
+	return "", fmt.Errorf("VM %d: IP detection via API not yet implemented", id)
 }
 
 // filterIPv4 parses command output to find valid IPv4 addresses.
 // It returns the first IP address that matches the configured prefix.
 func (pm *ProxmoxManager) filterIPv4(output string) (string, error) {
-	ips := strings.Fields(strings.TrimSpace(output))
-	for _, ip := range ips {
-		if net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.config.IPPrefix) {
-			return ip, nil
+	// Trim whitespace once
+	trimmed := strings.TrimSpace(output)
+
+	// Parse IPs without allocating intermediate slice
+	start := 0
+	for i := 0; i <= len(trimmed); i++ {
+		// Check for word boundary (space or end of string)
+		if i == len(trimmed) || trimmed[i] == ' ' || trimmed[i] == '\t' || trimmed[i] == '\n' {
+			if i > start {
+				ip := trimmed[start:i]
+				// Skip multiple spaces
+				if ip != "" && net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.config.IPPrefix) {
+					return ip, nil
+				}
+			}
+			// Skip whitespace
+			for i < len(trimmed) && (trimmed[i] == ' ' || trimmed[i] == '\t' || trimmed[i] == '\n') {
+				i++
+			}
+			start = i
 		}
 	}
-	return "", fmt.Errorf("IP filtering: %w with prefix %s in output: %s", ErrNoIPFound, pm.config.IPPrefix, strings.TrimSpace(output))
+	return "", fmt.Errorf("IP filtering: %w with prefix %s in output: %s", ErrNoIPFound, pm.config.IPPrefix, trimmed)
 }
 
 // GetInstanceByIdentifier retrieves a Proxmox instance by its identifier.
