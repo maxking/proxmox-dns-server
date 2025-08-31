@@ -343,6 +343,117 @@ func TestServer_handleDNSRequest(t *testing.T) {
 	}
 }
 
+// TestServer_handleDNSRequest_Forwarding tests the DNS forwarding functionality
+func TestServer_handleDNSRequest_Forwarding(t *testing.T) {
+	// Start a mock upstream DNS server
+	upstreamServer, upstreamAddr, err := startMockUpstreamServer()
+	if err != nil {
+		t.Fatalf("Failed to start mock upstream server: %v", err)
+	}
+	defer upstreamServer.Shutdown()
+
+	ctx := context.Background()
+	serverConfig := config.ServerConfig{
+		Zone:            "example.com",
+		Port:            "53",
+		Upstream:        upstreamAddr.String(),
+		IPPrefix:        "192.168.",
+		RefreshInterval: 30 * time.Second,
+		DebugMode:       false,
+	}
+
+	server := NewServer(ctx, serverConfig)
+
+	// Create DNS request for an external domain
+	req := new(dns.Msg)
+	req.SetQuestion("google.com.", dns.TypeA)
+
+	// Mock response writer
+	mockWriter := &MockResponseWriter{}
+
+	// Handle the request
+	server.handleDNSRequest(mockWriter, req)
+
+	// Verify response
+	assert.NotNil(t, mockWriter.response)
+	assert.Equal(t, dns.RcodeSuccess, mockWriter.response.Rcode)
+	assert.Len(t, mockWriter.response.Answer, 1)
+	aRecord, ok := mockWriter.response.Answer[0].(*dns.A)
+	assert.True(t, ok)
+	assert.Equal(t, "8.8.8.8", aRecord.A.String())
+}
+
+// TestServer_handleDNSRequest_Forwarding_UpstreamError tests forwarding when the upstream server fails
+func TestServer_handleDNSRequest_Forwarding_UpstreamError(t *testing.T) {
+	ctx := context.Background()
+	serverConfig := config.ServerConfig{
+		Zone:            "example.com",
+		Port:            "53",
+		Upstream:        "127.0.0.1:9999", // A non-existent server
+		IPPrefix:        "192.168.",
+		RefreshInterval: 30 * time.Second,
+		DebugMode:       false,
+	}
+
+	server := NewServer(ctx, serverConfig)
+
+	// Create DNS request for an external domain
+	req := new(dns.Msg)
+	req.SetQuestion("google.com.", dns.TypeA)
+
+	// Mock response writer
+	mockWriter := &MockResponseWriter{}
+
+	// Handle the request
+	server.handleDNSRequest(mockWriter, req)
+
+	// Verify response
+	assert.NotNil(t, mockWriter.response)
+	assert.Equal(t, dns.RcodeServerFailure, mockWriter.response.Rcode)
+}
+
+// startMockUpstreamServer starts a mock DNS server for testing forwarding
+func startMockUpstreamServer() (*dns.Server, net.Addr, error) {
+	handler := dns.NewServeMux()
+	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		if r.Question[0].Name == "google.com." && r.Question[0].Qtype == dns.TypeA {
+			m.Answer = append(m.Answer, &dns.A{
+				Hdr: dns.RR_Header{Name: "google.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600},
+				A:   net.ParseIP("8.8.8.8"),
+			})
+		}
+		w.WriteMsg(m)
+	})
+
+	server := &dns.Server{
+		Addr:    "127.0.0.1:0",
+		Net:     "udp",
+		Handler: handler,
+	}
+
+	// Use a channel to signal when the server is ready
+	ready := make(chan struct{})
+	server.NotifyStartedFunc = func() {
+		close(ready)
+	}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil {
+			// Don't log error on graceful shutdown
+			// if err != dns. {
+			// 	log.Printf("Mock upstream server error: %v", err)
+			// }
+		}
+	}()
+
+	// Wait for the server to start
+	<-ready
+
+	return server, server.PacketConn.LocalAddr(), nil
+}
+
 // MockResponseWriter implements dns.ResponseWriter for testing
 type MockResponseWriter struct {
 	response   *dns.Msg
