@@ -279,7 +279,7 @@ func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := manager.getContainerIP(tt.id)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errMsg)
+			assert.Contains(t, err.Error(), tt.errmsg)
 		})
 	}
 }
@@ -325,11 +325,10 @@ func TestProxmoxManager_getVMIP_IDValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := manager.getVMIP(tt.id)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errMsg)
+			assert.Contains(t, err.Error(), tt.errmsg)
 		})
 	}
 }
-
 
 // Test data parsing functions with mock data
 func TestParseContainerList(t *testing.T) {
@@ -347,7 +346,7 @@ func TestParseContainerList(t *testing.T) {
 		if i == 0 {
 			continue
 		}
-		
+
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
@@ -372,16 +371,16 @@ func TestParseContainerList(t *testing.T) {
 	}
 
 	assert.Len(t, instances, 3)
-	
+
 	assert.Equal(t, 100, instances[0].ID)
 	assert.Equal(t, "webserver", instances[0].Name)
 	assert.Equal(t, "running", instances[0].Status)
 	assert.Equal(t, "container", instances[0].Type)
-	
+
 	assert.Equal(t, 101, instances[1].ID)
 	assert.Equal(t, "database", instances[1].Name)
 	assert.Equal(t, "stopped", instances[1].Status)
-	
+
 	assert.Equal(t, 102, instances[2].ID)
 	assert.Equal(t, "proxy", instances[2].Name)
 	assert.Equal(t, "running", instances[2].Status)
@@ -402,7 +401,7 @@ func TestParseVMList(t *testing.T) {
 		if i == 0 {
 			continue
 		}
-		
+
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
@@ -427,16 +426,16 @@ func TestParseVMList(t *testing.T) {
 	}
 
 	assert.Len(t, instances, 3)
-	
+
 	assert.Equal(t, 200, instances[0].ID)
 	assert.Equal(t, "ubuntu-vm", instances[0].Name)
 	assert.Equal(t, "running", instances[0].Status)
 	assert.Equal(t, "vm", instances[0].Type)
-	
+
 	assert.Equal(t, 201, instances[1].ID)
 	assert.Equal(t, "windows-server", instances[1].Name)
 	assert.Equal(t, "stopped", instances[1].Status)
-	
+
 	assert.Equal(t, 202, instances[2].ID)
 	assert.Equal(t, "test-vm", instances[2].Name)
 	assert.Equal(t, "running", instances[2].Status)
@@ -517,7 +516,7 @@ func TestMockCommandExecution(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	
+
 	args := os.Args
 	for len(args) > 0 {
 		if args[0] == "--" {
@@ -526,12 +525,12 @@ func TestMockCommandExecution(t *testing.T) {
 		}
 		args = args[1:]
 	}
-	
+
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "No command\n")
 		os.Exit(2)
 	}
-	
+
 	cmd := args[0]
 	switch cmd {
 	case "pct":
@@ -547,7 +546,6 @@ func TestMockCommandExecution(t *testing.T) {
 		os.Exit(1)
 	}
 }
-
 
 // TestProxmoxInstance verifies the ProxmoxInstance struct
 func TestProxmoxInstance(t *testing.T) {
@@ -577,9 +575,9 @@ func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
 		DebugMode:   false,
 	}
 	manager := NewProxmoxManager(cfg)
-	
+
 	testOutput := "10.0.1.1 192.168.1.100 172.16.1.1 192.168.1.200"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = manager.filterIPv4(testOutput)
@@ -596,7 +594,7 @@ func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 		DebugMode:   false,
 	}
 	manager := NewProxmoxManager(cfg)
-	
+
 	// Add test data
 	for i := 100; i < 200; i++ {
 		instance := ProxmoxInstance{
@@ -609,7 +607,7 @@ func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 		manager.instances.Store(strconv.Itoa(i), instance)
 		manager.instances.Store(instance.Name, instance)
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		id := strconv.Itoa(100 + (i % 100))
@@ -628,16 +626,16 @@ func TestProxmoxManager_RefreshInstances(t *testing.T) {
 		DebugMode:   true,
 	}
 	manager := NewProxmoxManager(cfg)
-	
+
 	// Add some existing data
 	manager.instances.Store("100", ProxmoxInstance{ID: 100, Name: "old"})
-	
+
 	// Refresh should clear existing data and try to reload
 	// Since we don't have Proxmox API available, individual nodes will fail
 	// but the overall refresh will continue and succeed (just with no instances loaded)
 	err := manager.RefreshInstances()
 	assert.NoError(t, err) // Should not fail - just logs warnings for unreachable nodes
-	
+
 	// Verify instances were cleared (new sync.Map created)
 	_, exists := manager.GetInstanceByIdentifier("100")
 	assert.False(t, exists, "Instances should be cleared during refresh")
