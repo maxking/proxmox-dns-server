@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+
+	"proxmox-dns-server/pkg/config"
 )
 
 // DNS server specific error variables
@@ -26,54 +28,7 @@ var (
 	ErrDNSServerStartup  = errors.New("DNS server startup failed")
 	ErrDNSServerShutdown = errors.New("DNS server shutdown failed")
 	ErrInstanceRefresh   = errors.New("instance refresh failed")
-	ErrInvalidConfig     = errors.New("invalid server configuration")
 )
-
-// ServerConfig holds configuration parameters for the DNS server.
-// It defines the zone to serve, network binding settings, and operational parameters.
-type ServerConfig struct {
-	Zone            string        // DNS zone to serve (e.g., "example.com")
-	Port            string        // Port to listen on (e.g., "53")
-	BindInterface   string        // Network interface to bind to (empty for all interfaces)
-	IPPrefix        string        // IP prefix filter for container/VM IPs (e.g., "192.168.")
-	RefreshInterval time.Duration // How often to refresh instance data from Proxmox
-	DebugMode       bool          // Enable debug logging
-}
-
-// Validate checks if the ServerConfig contains valid configuration values.
-// It returns an error if any required field is empty or invalid.
-func (sc *ServerConfig) Validate() error {
-	if sc.Zone == "" {
-		return fmt.Errorf("%w: zone is required", ErrInvalidConfig)
-	}
-
-	if sc.Port == "" {
-		return fmt.Errorf("%w: port is required", ErrInvalidConfig)
-	}
-
-	if sc.IPPrefix == "" {
-		return fmt.Errorf("%w: IP prefix is required", ErrInvalidConfig)
-	}
-
-	if sc.RefreshInterval <= 0 {
-		return fmt.Errorf("%w: refresh interval must be positive", ErrInvalidConfig)
-	}
-
-	return nil
-}
-
-// NewServerConfigFromFlags creates a ServerConfig from command line flag values.
-// It sets default values for RefreshInterval and DebugMode.
-func NewServerConfigFromFlags(zone, port, bindInterface, ipPrefix string) *ServerConfig {
-	return &ServerConfig{
-		Zone:            zone,
-		Port:            port,
-		BindInterface:   bindInterface,
-		IPPrefix:        ipPrefix,
-		RefreshInterval: 30 * time.Second, // Default refresh interval
-		DebugMode:       false,            // Default debug mode
-	}
-}
 
 // ProxmoxManagerInterface defines the interface for Proxmox instance management
 type ProxmoxManagerInterface interface {
@@ -84,7 +39,7 @@ type ProxmoxManagerInterface interface {
 // DNSServer represents the main DNS server that handles incoming DNS queries
 // and resolves them to Proxmox container and VM IP addresses.
 type DNSServer struct {
-	config  ServerConfig             // Server configuration
+	config  config.ServerConfig      // Server configuration
 	proxmox ProxmoxManagerInterface // Manager for Proxmox instance data
 	server  *dns.Server              // Underlying DNS server
 	ctx     context.Context          // Context for graceful shutdown
@@ -94,7 +49,7 @@ type DNSServer struct {
 
 // NewDNSServer creates a new DNS server instance with the given configuration.
 // It initializes the Proxmox manager and sets up the context for graceful shutdown.
-func NewDNSServer(parentCtx context.Context, config ServerConfig, proxmoxConfig ProxmoxConfig) *DNSServer {
+func NewDNSServer(parentCtx context.Context, config config.ServerConfig, proxmoxConfig config.ProxmoxConfig) *DNSServer {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &DNSServer{
 		config:  config,

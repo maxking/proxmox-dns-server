@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"proxmox-dns-server/pkg/config"
 )
 
 // Application-level error variables
@@ -26,114 +29,132 @@ var (
 	ErrServerShutdown       = errors.New("server shutdown failed")
 )
 
-// Config is deprecated, keeping for reference but will be removed.
-// Use ServerConfig from dns_server.go instead.
-type Config struct {
-	Zone      string // DNS zone to serve
-	Port      string // Port to listen on
-	Interface string // Network interface to bind to
-	IPPrefix  string // IP prefix filter for container/VM IPs
-}
-
 const usageHelp = `Error: %v
 
 Usage:
-  %s -zone <zone> -api-endpoint <endpoint> -node <node> [options]
+  %s [command] [options]
 
-Required flags:
-  -zone         DNS zone to serve
-  -api-endpoint Proxmox API endpoint (https://proxmox:8006/api2/json)
-  -node         Proxmox node name
+Commands:
+  generate-config   Generate a sample JSON configuration file and print it to stdout
 
-Authentication (choose one):
-  -username/-password   Username/password authentication
-  -api-token/-api-secret API token authentication
+Options:
+  -config           Path to a JSON configuration file
+  -zone             DNS zone to serve
+  -api-endpoint     Proxmox API endpoint (https://proxmox:8006/api2/json)
+  -username         Proxmox username (e.g. root@pam)
+  -password         Proxmox password
+  -api-token        Proxmox API token (alternative to username/password)
+  -api-secret       Proxmox API secret (required with api-token)
+  -node             Proxmox node name (if not specified, queries all cluster nodes)
+  -port             Port to listen on (default: 53)
+  -interface        Interface to bind to (default: all interfaces)
+  -ip-prefix        IP prefix filter for container/VM IPs (default: 192.168.)
+  -insecure-tls     Skip TLS certificate verification
+  -debug            Enable debug logging
 
-Optional flags:
-  -port         Port to listen on (default: 53)
-  -interface    Interface to bind to (default: all interfaces)
-  -ip-prefix    IP prefix filter for container/VM IPs (default: 192.168.)
-  -insecure-tls Skip TLS certificate verification
-  -debug        Enable debug logging
+Configuration file overrides command-line flags.
 
 Examples:
+  # Using command-line flags:
   %s -zone p01.araj.me -api-endpoint https://proxmox:8006/api2/json -node pve -username root@pam -password secret
-  %s -zone p01.araj.me -api-endpoint https://proxmox:8006/api2/json -node pve -api-token root@pam!token -api-secret secret-value
+  
+  # Using a configuration file:
+  %s -config /etc/proxmox-dns-server/config.json
 
-This will resolve:
-  102.p01.araj.me -> IP of container/VM with ID 102
-  mycontainer.p01.araj.me -> IP of container/VM named 'mycontainer'
+  # Generate a sample configuration:
+  %s generate-config
 `
 
 // main is the entry point for the Proxmox DNS server application.
 // It parses command line arguments, configures the DNS server,
 // and handles graceful shutdown when receiving signals.
 func main() {
-	var zone = flag.String("zone", "", "DNS zone to serve (required)")
-	var port = flag.String("port", "53", "Port to listen on")
-	var iface = flag.String("interface", "", "Interface to bind to (default: all interfaces)")
-	var ipPrefix = flag.String("ip-prefix", "192.168.", "IP prefix filter for container/VM IPs")
-	var debug = flag.Bool("debug", false, "Enable debug logging")
+	if len(os.Args) > 1 && os.Args[1] == "generate-config" {
+		generateSampleConfig()
+		os.Exit(0)
+	}
+
+	var configFile = flag.String("config", "", "Path to a JSON configuration file")
 	
-	// Proxmox API configuration
-	var apiEndpoint = flag.String("api-endpoint", "", "Proxmox API endpoint (e.g. https://proxmox:8006/api2/json) (required)")
-	var username = flag.String("username", "", "Proxmox username (e.g. root@pam)")
+	// Server flags
+	var zone = flag.String("zone", "", "DNS zone to serve")
+	var port = flag.String("port", "53", "Port to listen on")
+	var iface = flag.String("interface", "", "Interface to bind to")
+	var ipPrefix = flag.String("ip-prefix", "192.168.", "IP prefix filter")
+	var debug = flag.Bool("debug", false, "Enable debug logging")
+
+	// Proxmox flags
+	var apiEndpoint = flag.String("api-endpoint", "", "Proxmox API endpoint")
+	var username = flag.String("username", "", "Proxmox username")
 	var password = flag.String("password", "", "Proxmox password")
-	var apiToken = flag.String("api-token", "", "Proxmox API token (alternative to username/password)")
-	var apiSecret = flag.String("api-secret", "", "Proxmox API secret (required with api-token)")
-	var nodeName = flag.String("node", "", "Proxmox node name (required)")
-	var insecureTLS = flag.Bool("insecure-tls", false, "Skip TLS certificate verification")
+	var apiToken = flag.String("api-token", "", "Proxmox API token")
+	var apiSecret = flag.String("api-secret", "", "Proxmox API secret")
+	var nodeName = flag.String("node", "", "Proxmox node name")
+	var insecureTLS = flag.Bool("insecure-tls", false, "Skip TLS verification")
 
 	flag.Parse()
 
-	// Validate required fields
-	if *zone == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: zone is required", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	var cfg *config.Config
+	var err error
+
+	if *configFile != "" {
+		cfg, err = config.LoadConfig(*configFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config file: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		cfg = &config.Config{}
 	}
 
-	if *apiEndpoint == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: api-endpoint is required", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	// Override config with flags if they are provided
+	if *zone != "" {
+		cfg.Server.Zone = *zone
 	}
-
-	if *nodeName == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: node is required", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	if *port != "53" {
+		cfg.Server.Port = *port
 	}
-
-	// Validate authentication
-	if *username == "" && *apiToken == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: either username or api-token is required", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	if *iface != "" {
+		cfg.Server.BindInterface = *iface
 	}
-
-	if *username != "" && *password == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: password is required when username is provided", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	if *ipPrefix != "192.168." {
+		cfg.Server.IPPrefix = *ipPrefix
+		cfg.Proxmox.IPPrefix = *ipPrefix
 	}
-
-	if *apiToken != "" && *apiSecret == "" {
-		fmt.Fprintf(os.Stderr, usageHelp, fmt.Sprintf("%v: api-secret is required when api-token is provided", ErrInvalidConfiguration), os.Args[0], os.Args[0], os.Args[0])
-		os.Exit(1)
+	if *debug {
+		cfg.Server.DebugMode = *debug
+		cfg.Proxmox.DebugMode = *debug
 	}
-
-	// Build server configuration
-	serverConfig := NewServerConfigFromFlags(*zone, *port, *iface, *ipPrefix)
-	serverConfig.DebugMode = *debug
-
-	// Build Proxmox configuration
-	proxmoxConfig := NewProxmoxConfigFromFlags(*ipPrefix, *apiEndpoint, *username, *password, *apiToken, *apiSecret, *nodeName, *insecureTLS)
-	proxmoxConfig.DebugMode = *debug
+	if *apiEndpoint != "" {
+		cfg.Proxmox.APIEndpoint = *apiEndpoint
+	}
+	if *username != "" {
+		cfg.Proxmox.Username = *username
+	}
+	if *password != "" {
+		cfg.Proxmox.Password = *password
+	}
+	if *apiToken != "" {
+		cfg.Proxmox.APIToken = *apiToken
+	}
+	if *apiSecret != "" {
+		cfg.Proxmox.APISecret = *apiSecret
+	}
+	if *nodeName != "" {
+		cfg.Proxmox.NodeName = *nodeName
+	}
+	if *insecureTLS {
+		cfg.Proxmox.InsecureTLS = *insecureTLS
+	}
 
 	// Validate server configuration
-	if err := serverConfig.Validate(); err != nil {
+	if err := cfg.Server.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Server configuration validation failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Validate Proxmox configuration
-	if err := proxmoxConfig.Validate(); err != nil {
+	if err := cfg.Proxmox.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Proxmox configuration validation failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -141,7 +162,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	server := NewDNSServer(ctx, *serverConfig, *proxmoxConfig)
+	server := NewDNSServer(ctx, cfg.Server, cfg.Proxmox)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -159,9 +180,9 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Printf("Starting Proxmox DNS server for zone %s on port %s", serverConfig.Zone, serverConfig.Port)
+		log.Printf("Starting Proxmox DNS server for zone %s on port %s", cfg.Server.Zone, cfg.Server.Port)
 		if err := server.Start(); err != nil {
-			log.Printf("DNS server startup failed: %v", fmt.Errorf("%w for zone %s on port %s: %v", ErrServerStartup, serverConfig.Zone, serverConfig.Port, err))
+			log.Printf("DNS server startup failed: %v", fmt.Errorf("%w for zone %s on port %s: %v", ErrServerStartup, cfg.Server.Zone, cfg.Server.Port, err))
 			cancel()
 		}
 	}()
@@ -190,4 +211,36 @@ func main() {
 	case <-shutdownCtx.Done():
 		log.Println("Shutdown timeout exceeded, forcing exit")
 	}
+}
+
+func generateSampleConfig() {
+	sampleConfig := config.Config{
+		Server: config.ServerConfig{
+			Zone:            "example.com",
+			Port:            "53",
+			BindInterface:   "",
+			IPPrefix:        "192.168.1.",
+			RefreshInterval: 30 * time.Second,
+			DebugMode:       false,
+		},
+		Proxmox: config.ProxmoxConfig{
+			APIEndpoint: "https://proxmox:8006/api2/json",
+			Username:    "root@pam",
+			Password:    "your-password",
+			APIToken:    "",
+			APISecret:   "",
+			NodeName:    "",
+			InsecureTLS: false,
+			IPPrefix:    "192.168.1.",
+			CommandTimeout: 30 * time.Second,
+			DebugMode:   false,
+		},
+	}
+
+	output, err := json.MarshalIndent(sampleConfig, "", "  ")
+	if err != nil {
+		log.Fatalf("Failed to generate sample config: %v", err)
+	}
+
+	fmt.Println(string(output))
 }

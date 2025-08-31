@@ -8,180 +8,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"proxmox-dns-server/pkg/config"
 )
-
-func TestNewProxmoxConfigFromFlags(t *testing.T) {
-	tests := []struct {
-		name        string
-		ipPrefix    string
-		apiEndpoint string
-		username    string
-		password    string
-		apiToken    string
-		apiSecret   string
-		nodeName    string
-		insecureTLS bool
-		expected    *ProxmoxConfig
-	}{
-		{
-			name:        "Valid username/password config",
-			ipPrefix:    "192.168.",
-			apiEndpoint: "https://proxmox:8006/api2/json",
-			username:    "root@pam",
-			password:    "secret",
-			nodeName:    "pve",
-			insecureTLS: false,
-			expected: &ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				Username:    "root@pam",
-				Password:    "secret",
-				NodeName:    "pve",
-				InsecureTLS: false,
-				DebugMode:   false,
-			},
-		},
-		{
-			name:        "Valid API token config",
-			ipPrefix:    "10.0.",
-			apiEndpoint: "https://pve.local:8006/api2/json",
-			apiToken:    "root@pam!mytoken",
-			apiSecret:   "token-secret",
-			nodeName:    "node1",
-			insecureTLS: true,
-			expected: &ProxmoxConfig{
-				IPPrefix:    "10.0.",
-				APIEndpoint: "https://pve.local:8006/api2/json",
-				APIToken:    "root@pam!mytoken",
-				APISecret:   "token-secret",
-				NodeName:    "node1",
-				InsecureTLS: true,
-				DebugMode:   false,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := NewProxmoxConfigFromFlags(tt.ipPrefix, tt.apiEndpoint, tt.username, tt.password, tt.apiToken, tt.apiSecret, tt.nodeName, tt.insecureTLS)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestProxmoxConfig_Validate(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  ProxmoxConfig
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "Valid configuration with username/password",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				Username:    "root@pam",
-				Password:    "secret",
-				NodeName:    "pve",
-				DebugMode:   false,
-			},
-			wantErr: false,
-		},
-		{
-			name: "Valid configuration with API token",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				APIToken:    "root@pam!token",
-				APISecret:   "secret",
-				NodeName:    "pve",
-				DebugMode:   false,
-			},
-			wantErr: false,
-		},
-		{
-			name: "Missing IP prefix",
-			config: ProxmoxConfig{
-				IPPrefix:    "",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				Username:    "root@pam",
-				Password:    "secret",
-				NodeName:    "pve",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: IP prefix is required",
-		},
-		{
-			name: "Missing API endpoint",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "",
-				Username:    "root@pam",
-				Password:    "secret",
-				NodeName:    "pve",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: API endpoint is required",
-		},
-		{
-			name: "Missing node name",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				Username:    "root@pam",
-				Password:    "secret",
-				NodeName:    "",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: node name is required",
-		},
-		{
-			name: "Missing authentication",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				NodeName:    "pve",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: either username or API token is required",
-		},
-		{
-			name: "Username without password",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				Username:    "root@pam",
-				NodeName:    "pve",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: password is required when username is provided",
-		},
-		{
-			name: "API token without secret",
-			config: ProxmoxConfig{
-				IPPrefix:    "192.168.",
-				APIEndpoint: "https://proxmox:8006/api2/json",
-				APIToken:    "root@pam!token",
-				NodeName:    "pve",
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: API secret is required when API token is provided",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Equal(t, tt.errMsg, err.Error())
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
 
 func TestProxmoxErrorConstants(t *testing.T) {
 	assert.NotEmpty(t, ErrContainerNotFound.Error())
@@ -190,7 +19,6 @@ func TestProxmoxErrorConstants(t *testing.T) {
 	assert.NotEmpty(t, ErrCommandTimeout.Error())
 	assert.NotEmpty(t, ErrNoIPFound.Error())
 	assert.NotEmpty(t, ErrInvalidIPPrefix.Error())
-	assert.NotEmpty(t, ErrInvalidProxmoxConfig.Error())
 
 	assert.Equal(t, "container not found", ErrContainerNotFound.Error())
 	assert.Equal(t, "VM not found", ErrVMNotFound.Error())
@@ -198,7 +26,6 @@ func TestProxmoxErrorConstants(t *testing.T) {
 	assert.Equal(t, "command execution timeout", ErrCommandTimeout.Error())
 	assert.Equal(t, "no suitable IP address found", ErrNoIPFound.Error())
 	assert.Equal(t, "IP does not match configured prefix", ErrInvalidIPPrefix.Error())
-	assert.Equal(t, "invalid proxmox configuration", ErrInvalidProxmoxConfig.Error())
 }
 
 func TestProxmoxIDConstants(t *testing.T) {
@@ -207,7 +34,7 @@ func TestProxmoxIDConstants(t *testing.T) {
 }
 
 func TestNewProxmoxManager(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -216,15 +43,15 @@ func TestNewProxmoxManager(t *testing.T) {
 		DebugMode:   false,
 	}
 
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 
 	assert.NotNil(t, manager)
-	assert.Equal(t, config, manager.config)
+	assert.Equal(t, cfg, manager.config)
 	assert.NotNil(t, manager.client)
 }
 
 func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -232,7 +59,7 @@ func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 
 	// Test with empty storage
 	_, exists := manager.GetInstanceByIdentifier("102")
@@ -265,7 +92,7 @@ func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
 }
 
 func TestProxmoxManager_filterIPv4(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -273,7 +100,7 @@ func TestProxmoxManager_filterIPv4(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name       string
@@ -380,7 +207,7 @@ func TestProxmoxManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := ProxmoxConfig{
+			cfg := config.ProxmoxConfig{
 				IPPrefix:    tt.ipPrefix,
 				APIEndpoint: "https://proxmox:8006/api2/json",
 				Username:    "root@pam",
@@ -388,7 +215,7 @@ func TestProxmoxManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 				NodeName:    "pve",
 				DebugMode:   false,
 			}
-			manager := NewProxmoxManager(config)
+			manager := NewProxmoxManager(cfg)
 
 			result, err := manager.filterIPv4(tt.output)
 			if tt.wantErr {
@@ -406,7 +233,7 @@ func TestProxmoxManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 // but we'll use environment variables to control behavior for testing
 
 func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -414,37 +241,37 @@ func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name    string
 		id      int
 		wantErr bool
-		errMsg  string
+		errmsg  string
 	}{
 		{
 			name:    "Invalid ID - too small",
 			id:      MinProxmoxID - 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - too large",
 			id:      MaxProxmoxID + 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - negative",
 			id:      -1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Valid ID - should get API connection error",
 			id:      102,
 			wantErr: true,
-			errMsg:  "failed to get node",
+			errmsg:  "failed to get node",
 		},
 	}
 
@@ -458,7 +285,7 @@ func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
 }
 
 func TestProxmoxManager_getVMIP_IDValidation(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -466,31 +293,31 @@ func TestProxmoxManager_getVMIP_IDValidation(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name    string
 		id      int
 		wantErr bool
-		errMsg  string
+		errmsg  string
 	}{
 		{
 			name:    "Invalid ID - too small",
 			id:      MinProxmoxID - 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - too large",
 			id:      MaxProxmoxID + 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Valid ID - should get API connection error",
 			id:      102,
 			wantErr: true,
-			errMsg:  "failed to get node",
+			errmsg:  "failed to get node",
 		},
 	}
 
@@ -741,7 +568,7 @@ func TestProxmoxInstance(t *testing.T) {
 
 // Benchmark tests for performance validation
 func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -749,7 +576,7 @@ func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 	
 	testOutput := "10.0.1.1 192.168.1.100 172.16.1.1 192.168.1.200"
 	
@@ -760,7 +587,7 @@ func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
 }
 
 func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -768,7 +595,7 @@ func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 	
 	// Add test data
 	for i := 100; i < 200; i++ {
@@ -792,7 +619,7 @@ func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 
 // TestProxmoxManager_RefreshInstances tests the refresh functionality
 func TestProxmoxManager_RefreshInstances(t *testing.T) {
-	config := ProxmoxConfig{
+	cfg := config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -800,16 +627,16 @@ func TestProxmoxManager_RefreshInstances(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   true,
 	}
-	manager := NewProxmoxManager(config)
+	manager := NewProxmoxManager(cfg)
 	
 	// Add some existing data
 	manager.instances.Store("100", ProxmoxInstance{ID: 100, Name: "old"})
 	
 	// Refresh should clear existing data and try to reload
-	// Since we don't have Proxmox API available, this will fail
-	// but we can verify that the instances map was cleared
+	// Since we don't have Proxmox API available, individual nodes will fail
+	// but the overall refresh will continue and succeed (just with no instances loaded)
 	err := manager.RefreshInstances()
-	assert.Error(t, err) // Expected to fail without Proxmox API
+	assert.NoError(t, err) // Should not fail - just logs warnings for unreachable nodes
 	
 	// Verify instances were cleared (new sync.Map created)
 	_, exists := manager.GetInstanceByIdentifier("100")

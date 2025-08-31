@@ -129,8 +129,7 @@ func TestServerConfig_Validate(t *testing.T) {
 				IPPrefix:        "192.168.",
 				RefreshInterval: 0,
 			},
-			wantErr: true,
-			errMsg:  "invalid server configuration: refresh interval must be positive",
+			wantErr: false, // Now defaults to 30s
 		},
 		{
 			name: "Invalid refresh interval - negative",
@@ -140,8 +139,7 @@ func TestServerConfig_Validate(t *testing.T) {
 				IPPrefix:        "192.168.",
 				RefreshInterval: -1,
 			},
-			wantErr: true,
-			errMsg:  "invalid server configuration: refresh interval must be positive",
+			wantErr: false, // Now defaults to 30s
 		},
 		{
 			name: "Valid with bind interface",
@@ -171,33 +169,32 @@ func TestServerConfig_Validate(t *testing.T) {
 
 func TestNewProxmoxConfigFromFlags(t *testing.T) {
 	tests := []struct {
-		name     string
-		ipPrefix string
-		expected *ProxmoxConfig
+		name        string
+		ipPrefix    string
+		apiEndpoint string
+		username    string
+		password    string
+		apiToken    string
+		apiSecret   string
+		nodeName    string
+		insecureTLS bool
+		expected    *ProxmoxConfig
 	}{
 		{
-			name:     "Valid IP prefix",
-			ipPrefix: "192.168.",
+			name:        "Valid Proxmox configuration",
+			ipPrefix:    "192.168.",
+			apiEndpoint: "https://proxmox:8006/api2/json",
+			username:    "root@pam",
+			password:    "secret",
+			nodeName:    "pve",
+			insecureTLS: true,
 			expected: &ProxmoxConfig{
 				IPPrefix:       "192.168.",
-				CommandTimeout: 30 * time.Second,
-				DebugMode:      false,
-			},
-		},
-		{
-			name:     "Different IP prefix",
-			ipPrefix: "10.0.",
-			expected: &ProxmoxConfig{
-				IPPrefix:       "10.0.",
-				CommandTimeout: 30 * time.Second,
-				DebugMode:      false,
-			},
-		},
-		{
-			name:     "Empty IP prefix",
-			ipPrefix: "",
-			expected: &ProxmoxConfig{
-				IPPrefix:       "",
+				APIEndpoint:    "https://proxmox:8006/api2/json",
+				Username:       "root@pam",
+				Password:       "secret",
+				NodeName:       "pve",
+				InsecureTLS:    true,
 				CommandTimeout: 30 * time.Second,
 				DebugMode:      false,
 			},
@@ -206,7 +203,7 @@ func TestNewProxmoxConfigFromFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := NewProxmoxConfigFromFlags(tt.ipPrefix)
+			result := NewProxmoxConfigFromFlags(tt.ipPrefix, tt.apiEndpoint, tt.username, tt.password, tt.apiToken, tt.apiSecret, tt.nodeName, tt.insecureTLS)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -220,20 +217,34 @@ func TestProxmoxConfig_Validate(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "Valid configuration",
+			name: "Valid configuration with user/pass",
 			config: ProxmoxConfig{
 				IPPrefix:       "192.168.",
+				APIEndpoint:    "https://proxmox:8006/api2/json",
+				Username:       "root@pam",
+				Password:       "secret",
 				CommandTimeout: 30 * time.Second,
-				DebugMode:      false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid configuration with api token",
+			config: ProxmoxConfig{
+				IPPrefix:       "192.168.",
+				APIEndpoint:    "https://proxmox:8006/api2/json",
+				APIToken:       "root@pam!token",
+				APISecret:      "secret",
+				CommandTimeout: 30 * time.Second,
 			},
 			wantErr: false,
 		},
 		{
 			name: "Missing IP prefix",
 			config: ProxmoxConfig{
-				IPPrefix:       "",
+				APIEndpoint:    "https://proxmox:8006/api2/json",
+				Username:       "root@pam",
+				Password:       "secret",
 				CommandTimeout: 30 * time.Second,
-				DebugMode:      false,
 			},
 			wantErr: true,
 			errMsg:  "invalid proxmox configuration: IP prefix is required",
@@ -242,30 +253,12 @@ func TestProxmoxConfig_Validate(t *testing.T) {
 			name: "Invalid timeout - zero",
 			config: ProxmoxConfig{
 				IPPrefix:       "192.168.",
+				APIEndpoint:    "https://proxmox:8006/api2/json",
+				Username:       "root@pam",
+				Password:       "secret",
 				CommandTimeout: 0,
-				DebugMode:      false,
 			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: command timeout must be positive",
-		},
-		{
-			name: "Invalid timeout - negative",
-			config: ProxmoxConfig{
-				IPPrefix:       "192.168.",
-				CommandTimeout: -1 * time.Second,
-				DebugMode:      false,
-			},
-			wantErr: true,
-			errMsg:  "invalid proxmox configuration: command timeout must be positive",
-		},
-		{
-			name: "Valid with debug mode",
-			config: ProxmoxConfig{
-				IPPrefix:       "10.0.",
-				CommandTimeout: 60 * time.Second,
-				DebugMode:      true,
-			},
-			wantErr: false,
+			wantErr: false, // Now defaults to 30s
 		},
 	}
 

@@ -11,11 +11,13 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
+
+	"proxmox-dns-server/pkg/config"
 )
 
 // Helper function to create a test ProxmoxConfig
-func createTestProxmoxConfig() ProxmoxConfig {
-	return ProxmoxConfig{
+func createTestProxmoxConfig() config.ProxmoxConfig {
+	return config.ProxmoxConfig{
 		IPPrefix:    "192.168.",
 		APIEndpoint: "https://proxmox:8006/api2/json",
 		Username:    "root@pam",
@@ -27,7 +29,7 @@ func createTestProxmoxConfig() ProxmoxConfig {
 
 func TestNewDNSServer(t *testing.T) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		BindInterface:   "",
@@ -36,10 +38,10 @@ func TestNewDNSServer(t *testing.T) {
 		DebugMode:       false,
 	}
 	
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	assert.NotNil(t, server)
-	assert.Equal(t, config, server.config)
+	assert.Equal(t, serverConfig, server.config)
 	assert.NotNil(t, server.proxmox)
 	assert.NotNil(t, server.ctx)
 	assert.NotNil(t, server.cancel)
@@ -51,14 +53,12 @@ func TestDNSServerErrorConstants(t *testing.T) {
 	assert.NotEmpty(t, ErrDNSServerStartup.Error())
 	assert.NotEmpty(t, ErrDNSServerShutdown.Error())
 	assert.NotEmpty(t, ErrInstanceRefresh.Error())
-	assert.NotEmpty(t, ErrInvalidConfig.Error())
 
 	assert.Equal(t, "network interface not found", ErrInterfaceNotFound.Error())
 	assert.Equal(t, "no IPv4 address found", ErrNoIPv4Address.Error())
 	assert.Equal(t, "DNS server startup failed", ErrDNSServerStartup.Error())
 	assert.Equal(t, "DNS server shutdown failed", ErrDNSServerShutdown.Error())
 	assert.Equal(t, "instance refresh failed", ErrInstanceRefresh.Error())
-	assert.Equal(t, "invalid server configuration", ErrInvalidConfig.Error())
 }
 
 // MockProxmoxManager implements ProxmoxManagerInterface for testing DNS server functionality
@@ -214,7 +214,7 @@ func TestDNSServer_resolveA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			config := ServerConfig{
+			serverConfig := config.ServerConfig{
 				Zone:            tt.zone,
 				Port:            "53",
 				IPPrefix:        "192.168.",
@@ -222,7 +222,7 @@ func TestDNSServer_resolveA(t *testing.T) {
 				DebugMode:       true,
 			}
 
-			server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+			server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 			
 			// Replace the proxmox manager with our mock
 			mockProxmox := NewMockProxmoxManager()
@@ -257,7 +257,7 @@ func TestDNSServer_resolveA(t *testing.T) {
 
 func TestDNSServer_handleDNSRequest(t *testing.T) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		IPPrefix:        "192.168.",
@@ -265,7 +265,7 @@ func TestDNSServer_handleDNSRequest(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 	
 	// Setup mock proxmox manager
 	mockProxmox := NewMockProxmoxManager()
@@ -397,7 +397,7 @@ func (m *MockResponseWriter) Hijack() {
 
 func TestDNSServer_Stop(t *testing.T) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		IPPrefix:        "192.168.",
@@ -405,7 +405,7 @@ func TestDNSServer_Stop(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	// Test stopping server without starting it
 	err := server.Stop()
@@ -424,7 +424,7 @@ func TestDNSServer_StartWithCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel context immediately
 
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "0", // Use port 0 to avoid binding issues
 		IPPrefix:        "192.168.",
@@ -432,7 +432,7 @@ func TestDNSServer_StartWithCancelledContext(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	// Starting with cancelled context should return context error
 	err := server.Start()
@@ -442,7 +442,7 @@ func TestDNSServer_StartWithCancelledContext(t *testing.T) {
 
 func TestDNSServer_StartWithInvalidInterface(t *testing.T) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "0",
 		BindInterface:   "nonexistent-interface",
@@ -451,7 +451,7 @@ func TestDNSServer_StartWithInvalidInterface(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	err := server.Start()
 	assert.Error(t, err)
@@ -463,7 +463,7 @@ func TestDNSServer_periodicRefresh(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		IPPrefix:        "192.168.",
@@ -471,7 +471,7 @@ func TestDNSServer_periodicRefresh(t *testing.T) {
 		DebugMode:       true,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 	
 	// Replace with mock
 	mockProxmox := NewMockProxmoxManager()
@@ -504,7 +504,7 @@ func TestDNSServer_Integration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "test.local",
 		Port:            "0", // Let the OS choose an available port
 		IPPrefix:        "127.0.",
@@ -512,7 +512,7 @@ func TestDNSServer_Integration(t *testing.T) {
 		DebugMode:       true,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 	
 	// Replace with mock that has test data
 	mockProxmox := NewMockProxmoxManager()
@@ -557,7 +557,7 @@ func TestDNSServer_Integration(t *testing.T) {
 // BenchmarkDNSServer_resolveA benchmarks the DNS resolution function
 func BenchmarkDNSServer_resolveA(b *testing.B) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		IPPrefix:        "192.168.",
@@ -565,7 +565,7 @@ func BenchmarkDNSServer_resolveA(b *testing.B) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 	
 	// Setup mock with test data
 	mockProxmox := NewMockProxmoxManager()
@@ -587,7 +587,7 @@ func BenchmarkDNSServer_resolveA(b *testing.B) {
 // BenchmarkDNSServer_handleDNSRequest benchmarks the DNS request handling
 func BenchmarkDNSServer_handleDNSRequest(b *testing.B) {
 	ctx := context.Background()
-	config := ServerConfig{
+	serverConfig := config.ServerConfig{
 		Zone:            "example.com",
 		Port:            "53",
 		IPPrefix:        "192.168.",
@@ -595,7 +595,7 @@ func BenchmarkDNSServer_handleDNSRequest(b *testing.B) {
 		DebugMode:       false,
 	}
 
-	server := NewDNSServer(ctx, config, createTestProxmoxConfig())
+	server := NewDNSServer(ctx, serverConfig, createTestProxmoxConfig())
 	
 	// Setup mock
 	mockProxmox := NewMockProxmoxManager()
