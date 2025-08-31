@@ -2,46 +2,11 @@
 
 set -e
 
-REPO_URL="git.araj.me/araj/proxmox-dns-server"
 SERVICE_NAME="proxmox-dns-server"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
-
-usage() {
-    echo "Usage: $0 -z <zone> [-p <port>] [-i <interface>]"
-    echo "Example: $0 -z p01.araj.me -p 53 -i eth0"
-    exit 1
-}
-
-ZONE=""
-PORT="53"
-INTERFACE=""
-
-while getopts "z:p:i:h" opt; do
-    case ${opt} in
-        z )
-            ZONE=$OPTARG
-            ;;
-        p )
-            PORT=$OPTARG
-            ;;
-        i )
-            INTERFACE=$OPTARG
-            ;;
-        h )
-            usage
-            ;;
-        \? )
-            echo "Invalid option: $OPTARG" 1>&2
-            usage
-            ;;
-    esac
-done
-
-if [ -z "$ZONE" ]; then
-    echo "Error: Zone is required"
-    usage
-fi
+CONFIG_DIR="/etc"
+CONFIG_FILE="$CONFIG_DIR/$SERVICE_NAME.json"
 
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root"
@@ -49,11 +14,6 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 echo "Installing Proxmox DNS Server..."
-echo "Zone: $ZONE"
-echo "Port: $PORT"
-if [ -n "$INTERFACE" ]; then
-    echo "Interface: $INTERFACE"
-fi
 
 echo "Fetching latest release information..."
 
@@ -80,13 +40,34 @@ echo "Installing binary to $INSTALL_DIR..."
 chmod +x /tmp/proxmox-dns-server
 mv /tmp/proxmox-dns-server "$INSTALL_DIR/"
 
-echo "Creating systemd service..."
-
-# Build ExecStart command with optional interface parameter
-EXEC_START="$INSTALL_DIR/proxmox-dns-server -zone $ZONE -port $PORT"
-if [ -n "$INTERFACE" ]; then
-    EXEC_START="$EXEC_START -interface $INTERFACE"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Creating default configuration file at $CONFIG_FILE..."
+    cat > "$CONFIG_FILE" << EOF
+{
+  "server": {
+    "zone": "pve.example.com",
+    "port": "53",
+    "interface": "",
+    "upstream": "1.1.1.1:53",
+    "ip_prefix": "192.168.",
+    "refresh_interval": 30,
+    "debug": false
+  },
+  "proxmox": {
+    "api_endpoint": "https://localhost:8006/api2/json",
+    "username": "root@pam",
+    "password": "your-password",
+    "node": "pve",
+    "insecure_tls": true
+  }
+}
+EOF
+    echo "Default configuration file created. Please edit $CONFIG_FILE with your settings."
+else
+    echo "Configuration file already exists at $CONFIG_FILE, skipping creation."
 fi
+
+echo "Creating systemd service..."
 
 cat > "$SERVICE_DIR/$SERVICE_NAME.service" << EOF
 [Unit]
@@ -96,7 +77,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=$EXEC_START
+ExecStart=$INSTALL_DIR/proxmox-dns-server -config $CONFIG_FILE
 Restart=always
 RestartSec=5
 User=root
