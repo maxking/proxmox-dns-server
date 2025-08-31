@@ -10,13 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/miekg/dns"
+	"go.uber.org/zap"
 	"proxmox-dns-server/pkg/config"
 	"proxmox-dns-server/pkg/proxmox"
 )
@@ -45,17 +45,19 @@ type Server struct {
 	ctx     context.Context         // Context for graceful shutdown
 	cancel  context.CancelFunc      // Cancel function for context
 	wg      sync.WaitGroup          // WaitGroup for managing goroutines
+	logger  *zap.Logger             // Logger for logging messages
 }
 
 // NewServer creates a new DNS server instance with the given configuration.
 // It initializes the Proxmox manager and sets up the context for graceful shutdown.
-func NewServer(parentCtx context.Context, serverConfig config.ServerConfig, proxmoxConfig config.ProxmoxConfig) *Server {
+func NewServer(parentCtx context.Context, serverConfig config.ServerConfig, proxmoxConfig config.ProxmoxConfig, logger *zap.Logger) *Server {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &Server{
 		config:  serverConfig,
-		proxmox: proxmox.NewProxmoxManager(proxmoxConfig),
+		proxmox: proxmox.NewProxmoxManager(proxmoxConfig, logger),
 		ctx:     ctx,
 		cancel:  cancel,
+		logger:  logger,
 	}
 }
 
@@ -99,14 +101,23 @@ func (ds *Server) Start() error {
 		}
 
 		addr = ip.String() + ":" + ds.config.Port
-		log.Printf("Starting DNS server for zone %s on interface %s (%s:%s)", ds.config.Zone, ds.config.BindInterface, ip.String(), ds.config.Port)
+		ds.logger.Info("Starting DNS server",
+			zap.String("zone", ds.config.Zone),
+			zap.String("interface", ds.config.BindInterface),
+			zap.String("address", ip.String()),
+			zap.String("port", ds.config.Port),
+		)
 	} else {
 		addr = ":" + ds.config.Port
-		log.Printf("Starting DNS server for zone %s on all interfaces (port %s)", ds.config.Zone, ds.config.Port)
+		ds.logger.Info("Starting DNS server",
+			zap.String("zone", ds.config.Zone),
+			zap.String("interface", "all"),
+			zap.String("port", ds.config.Port),
+		)
 	}
 
 	if err := ds.proxmox.RefreshInstances(); err != nil {
-		log.Printf("Warning: DNS server startup: %v: %v", ErrInstanceRefresh, err)
+		ds.logger.Warn("DNS server startup: instance refresh failed", zap.Error(err))
 	}
 
 	ds.wg.Add(1)
@@ -132,7 +143,7 @@ func (ds *Server) Start() error {
 	case <-ds.ctx.Done():
 		// Context was cancelled, shutdown server
 		if shutdownErr := ds.server.Shutdown(); shutdownErr != nil {
-			log.Printf("DNS server context cancellation: %v: %v", ErrDNSServerShutdown, shutdownErr)
+			ds.logger.Error("DNS server context cancellation", zap.Error(shutdownErr))
 		}
 		return ds.ctx.Err()
 	}
@@ -165,12 +176,12 @@ func (ds *Server) periodicRefresh() {
 		select {
 		case <-ds.ctx.Done():
 			if ds.config.DebugMode {
-				log.Println("Stopping periodic refresh...")
+				ds.logger.Debug("Stopping periodic refresh...")
 			}
 			return
 		case <-ticker.C:
 			if err := ds.proxmox.RefreshInstances(); err != nil {
-				log.Printf("Periodic refresh: %v: %v", ErrInstanceRefresh, err)
+				ds.logger.Warn("Periodic refresh failed", zap.Error(err))
 			}
 		}
 	}
@@ -187,28 +198,40 @@ func (ds *Server) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	clientAddr := w.RemoteAddr().String()
 
 	for _, q := range r.Question {
-		log.Printf("DNS Request from %s: %s %s", clientAddr, dns.TypeToString[q.Qtype], q.Name)
+		ds.logger.Debug("DNS Request",
+			zap.String("client", clientAddr),
+			zap.String("type", dns.TypeToString[q.Qtype]),
+			zap.String("name", q.Name),
+		)
 
 		// Handle local zone queries
 		if q.Qtype == dns.TypeA && strings.HasSuffix(q.Name, ds.config.Zone+".") {
 			if answer := ds.resolveA(q.Name); answer != nil {
 				m.Answer = append(m.Answer, answer)
 			} else {
-				log.Printf("DNS Request failed: No record found for %s", q.Name)
+				ds.logger.Warn("DNS Request failed: No record found",
+					zap.String("name", q.Name),
+				)
 				m.SetRcode(r, dns.RcodeNameError)
 			}
 		} else if ds.config.Upstream != "" {
 			// Forward other queries to the upstream server
 			resp, err := ds.forwardQuery(r)
 			if err != nil {
-				log.Printf("Failed to forward query for %s: %v", q.Name, err)
+				ds.logger.Error("Failed to forward query",
+					zap.String("name", q.Name),
+					zap.Error(err),
+				)
 				m.SetRcode(r, dns.RcodeServerFailure)
 			} else {
 				m = resp
 			}
 		} else {
 			// No upstream server configured, reject non-local queries
-			log.Printf("DNS Request failed: Unsupported query type %s or wrong zone for %s", dns.TypeToString[q.Qtype], q.Name)
+			ds.logger.Warn("DNS Request failed: Unsupported query type or wrong zone",
+				zap.String("type", dns.TypeToString[q.Qtype]),
+				zap.String("name", q.Name),
+			)
 			m.SetRcode(r, dns.RcodeNameError)
 		}
 	}
@@ -228,38 +251,42 @@ func (ds *Server) resolveA(name string) dns.RR {
 	name = strings.TrimSuffix(name, ".")
 
 	if !strings.HasSuffix(name, zoneSuffix) {
-		if ds.config.DebugMode {
-			log.Printf("Debug: %s does not match zone %s", name, ds.config.Zone)
-		}
+		ds.logger.Debug("Name does not match zone",
+			zap.String("name", name),
+			zap.String("zone", ds.config.Zone),
+		)
 		return nil
 	}
 
 	// Extract identifier more efficiently
 	identifier := name[:len(name)-len(zoneSuffix)]
-	if ds.config.DebugMode {
-		log.Printf("Debug: Looking up identifier '%s' for %s", identifier, name)
-	}
+	ds.logger.Debug("Looking up identifier",
+		zap.String("identifier", identifier),
+		zap.String("name", name),
+	)
 
 	instance, exists := ds.proxmox.GetInstanceByIdentifier(identifier)
 	if !exists {
-		if ds.config.DebugMode {
-			log.Printf("Debug: No instance found for identifier '%s'", identifier)
-		}
+		ds.logger.Debug("No instance found for identifier",
+			zap.String("identifier", identifier),
+		)
 		return nil
 	}
 
 	if instance.IPv4 == "" {
-		if ds.config.DebugMode {
-			log.Printf("Debug: Instance %s (%s) has no IPv4 address", instance.Name, identifier)
-		}
+		ds.logger.Debug("Instance has no IPv4 address",
+			zap.String("name", instance.Name),
+			zap.String("identifier", identifier),
+		)
 		return nil
 	}
 
 	ip := net.ParseIP(instance.IPv4)
 	if ip == nil {
-		if ds.config.DebugMode {
-			log.Printf("Debug: Invalid IP address '%s' for instance %s", instance.IPv4, instance.Name)
-		}
+		ds.logger.Debug("Invalid IP address for instance",
+			zap.String("ip", instance.IPv4),
+			zap.String("name", instance.Name),
+		)
 		return nil
 	}
 
@@ -273,7 +300,12 @@ func (ds *Server) resolveA(name string) dns.RR {
 		A: ip,
 	}
 
-	log.Printf("Successfully resolved %s to %s (instance: %s, type: %s)", name, instance.IPv4, instance.Name, instance.Type)
+	ds.logger.Info("Successfully resolved",
+		zap.String("name", name),
+		zap.String("ip", instance.IPv4),
+		zap.String("instance", instance.Name),
+		zap.String("type", instance.Type),
+	)
 	return rr
 }
 

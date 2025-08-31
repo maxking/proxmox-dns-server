@@ -11,7 +11,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -20,7 +19,7 @@ import (
 	"time"
 
 	"github.com/luthermonson/go-proxmox"
-
+	"go.uber.org/zap"
 	"proxmox-dns-server/pkg/config"
 )
 
@@ -47,9 +46,10 @@ type ProxmoxInstance struct {
 // ProxmoxManager manages the discovery and caching of Proxmox container and VM instances.
 // It provides thread-safe access to instance data and handles periodic refreshes via API.
 type ProxmoxManager struct {
-	instances sync.Map            // Thread-safe map storing instances by ID and name
+	instances sync.Map             // Thread-safe map storing instances by ID and name
 	config    config.ProxmoxConfig // Configuration for Proxmox operations
-	client    *proxmox.Client     // Proxmox API client
+	client    *proxmox.Client      // Proxmox API client
+	logger    *zap.Logger          // Logger for logging messages
 }
 
 // Proxmox ID validation constants
@@ -60,7 +60,7 @@ const (
 
 // NewProxmoxManager creates a new ProxmoxManager with the given configuration.
 // It initializes the thread-safe instance storage and creates the API client.
-func NewProxmoxManager(config config.ProxmoxConfig) *ProxmoxManager {
+func NewProxmoxManager(config config.ProxmoxConfig, logger *zap.Logger) *ProxmoxManager {
 	// Create HTTP client with optional TLS configuration
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -93,6 +93,7 @@ func NewProxmoxManager(config config.ProxmoxConfig) *ProxmoxManager {
 	return &ProxmoxManager{
 		config: config,
 		client: client,
+		logger: logger,
 	}
 }
 
@@ -117,10 +118,13 @@ func (pm *ProxmoxManager) getNodes(ctx context.Context) ([]string, error) {
 		if node.Status == "online" {
 			nodeNames = append(nodeNames, node.Node)
 			if pm.config.DebugMode {
-				log.Printf("Debug: Found online node: %s", node.Node)
+				pm.logger.Debug("Found online node", zap.String("node", node.Node))
 			}
 		} else if pm.config.DebugMode {
-			log.Printf("Debug: Skipping offline node: %s (status: %s)", node.Node, node.Status)
+			pm.logger.Debug("Skipping offline node",
+				zap.String("node", node.Node),
+				zap.String("status", node.Status),
+			)
 		}
 	}
 
@@ -167,19 +171,28 @@ func (pm *ProxmoxManager) loadContainers() error {
 		// Get the node
 		node, err := pm.client.Node(ctx, nodeName)
 		if err != nil {
-			log.Printf("Warning: Failed to get node %s: %v", nodeName, err)
+			pm.logger.Warn("Failed to get node",
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 			continue
 		}
 
 		// Get containers from this node
 		containers, err := node.Containers(ctx)
 		if err != nil {
-			log.Printf("Warning: Failed to get containers from node %s: %v", nodeName, err)
+			pm.logger.Warn("Failed to get containers from node",
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 			continue
 		}
 
 		if pm.config.DebugMode {
-			log.Printf("Debug: Found %d containers on node %s", len(containers), nodeName)
+			pm.logger.Debug("Found containers on node",
+				zap.Int("count", len(containers)),
+				zap.String("node", nodeName),
+			)
 		}
 		totalContainers += len(containers)
 
@@ -187,16 +200,26 @@ func (pm *ProxmoxManager) loadContainers() error {
 			// Only process running containers
 			if container.Status != "running" {
 				if pm.config.DebugMode {
-					log.Printf("Debug: Container %d (%s) on node %s is %s, skipping IP detection", container.VMID, container.Name, nodeName, container.Status)
+					pm.logger.Debug("Container is not running, skipping IP detection",
+						zap.Int("id", int(uint64(container.VMID))),
+						zap.String("name", container.Name),
+						zap.String("node", nodeName),
+						zap.String("status", container.Status),
+					)
 				}
 				continue
 			}
 
 			containerID := int(uint64(container.VMID))
-			
+
 			ipv4, err := pm.getContainerIPFromNode(containerID, nodeName)
 			if err != nil {
-				log.Printf("Warning: Failed to get IP for container %d (%s) on node %s: %v", containerID, container.Name, nodeName, err)
+				pm.logger.Warn("Failed to get IP for container",
+					zap.Int("id", containerID),
+					zap.String("name", container.Name),
+					zap.String("node", nodeName),
+					zap.Error(err),
+				)
 				continue
 			}
 
@@ -212,13 +235,18 @@ func (pm *ProxmoxManager) loadContainers() error {
 			pm.instances.Store(container.Name, instance)
 
 			if pm.config.DebugMode {
-				log.Printf("Debug: Loaded container %d (%s) on node %s with IP %s", containerID, container.Name, nodeName, ipv4)
+				pm.logger.Debug("Loaded container",
+					zap.Int("id", containerID),
+					zap.String("name", container.Name),
+					zap.String("node", nodeName),
+					zap.String("ip", ipv4),
+				)
 			}
 		}
 	}
 
 	if pm.config.DebugMode {
-		log.Printf("Debug: Total containers found across all nodes: %d", totalContainers)
+		pm.logger.Debug("Total containers found", zap.Int("count", totalContainers))
 	}
 
 	return nil
@@ -242,19 +270,28 @@ func (pm *ProxmoxManager) loadVMs() error {
 		// Get the node
 		node, err := pm.client.Node(ctx, nodeName)
 		if err != nil {
-			log.Printf("Warning: Failed to get node %s: %v", nodeName, err)
+			pm.logger.Warn("Failed to get node",
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 			continue
 		}
 
 		// Get VMs from this node
 		vms, err := node.VirtualMachines(ctx)
 		if err != nil {
-			log.Printf("Warning: Failed to get VMs from node %s: %v", nodeName, err)
+			pm.logger.Warn("Failed to get VMs from node",
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 			continue
 		}
 
 		if pm.config.DebugMode {
-			log.Printf("Debug: Found %d VMs on node %s", len(vms), nodeName)
+			pm.logger.Debug("Found VMs on node",
+				zap.Int("count", len(vms)),
+				zap.String("node", nodeName),
+			)
 		}
 		totalVMs += len(vms)
 
@@ -262,16 +299,26 @@ func (pm *ProxmoxManager) loadVMs() error {
 			// Only process running VMs
 			if vm.Status != "running" {
 				if pm.config.DebugMode {
-					log.Printf("Debug: VM %d (%s) on node %s is %s, skipping IP detection", vm.VMID, vm.Name, nodeName, vm.Status)
+					pm.logger.Debug("VM is not running, skipping IP detection",
+						zap.Int("id", int(uint64(vm.VMID))),
+						zap.String("name", vm.Name),
+						zap.String("node", nodeName),
+						zap.String("status", vm.Status),
+					)
 				}
 				continue
 			}
 
 			vmID := int(uint64(vm.VMID))
-			
+
 			ipv4, err := pm.getVMIPFromNode(vmID, nodeName)
 			if err != nil {
-				log.Printf("Warning: Failed to get IP for VM %d (%s) on node %s: %v", vmID, vm.Name, nodeName, err)
+				pm.logger.Warn("Failed to get IP for VM",
+					zap.Int("id", vmID),
+					zap.String("name", vm.Name),
+					zap.String("node", nodeName),
+					zap.Error(err),
+				)
 				continue
 			}
 
@@ -287,13 +334,18 @@ func (pm *ProxmoxManager) loadVMs() error {
 			pm.instances.Store(vm.Name, instance)
 
 			if pm.config.DebugMode {
-				log.Printf("Debug: Loaded VM %d (%s) on node %s with IP %s", vmID, vm.Name, nodeName, ipv4)
+				pm.logger.Debug("Loaded VM",
+					zap.Int("id", vmID),
+					zap.String("name", vm.Name),
+					zap.String("node", nodeName),
+					zap.String("ip", ipv4),
+				)
 			}
 		}
 	}
 
 	if pm.config.DebugMode {
-		log.Printf("Debug: Total VMs found across all nodes: %d", totalVMs)
+		pm.logger.Debug("Total VMs found", zap.Int("count", totalVMs))
 	}
 
 	return nil
@@ -328,10 +380,14 @@ func (pm *ProxmoxManager) getContainerIP(id int) (string, error) {
 		if err == nil {
 			return ip, nil
 		}
-		
+
 		// Log the error but continue to next node (container might be on a different node)
 		if pm.config.DebugMode {
-			log.Printf("Debug: Container %d not found on node %s: %v", id, nodeName, err)
+			pm.logger.Debug("Container not found on node",
+				zap.Int("id", id),
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 		}
 	}
 
@@ -388,10 +444,14 @@ func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 		if err == nil {
 			return ip, nil
 		}
-		
+
 		// Log the error but continue to next node (VM might be on a different node)
 		if pm.config.DebugMode {
-			log.Printf("Debug: VM %d not found on node %s: %v", id, nodeName, err)
+			pm.logger.Debug("VM not found on node",
+				zap.Int("id", id),
+				zap.String("node", nodeName),
+				zap.Error(err),
+			)
 		}
 	}
 
@@ -431,11 +491,16 @@ func (pm *ProxmoxManager) getContainerIPFromNode(id int, nodeName string) (strin
 		if iface.Inet != "" {
 			// Parse the IP (might be in CIDR format like "192.168.1.100/24")
 			ip := strings.Split(iface.Inet, "/")[0]
-			
+
 			// Validate it's a proper IP
 			if net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.config.IPPrefix) {
 				if pm.config.DebugMode {
-					log.Printf("Debug: Container %d on node %s - found IP %s on interface %s", id, nodeName, ip, iface.Name)
+					pm.logger.Debug("Found IP for container on node",
+						zap.Int("id", id),
+						zap.String("node", nodeName),
+						zap.String("ip", ip),
+						zap.String("interface", iface.Name),
+					)
 				}
 				return ip, nil
 			}
@@ -476,17 +541,26 @@ func (pm *ProxmoxManager) getVMIPFromNode(id int, nodeName string) (string, erro
 	// Look for the first IPv4 address that matches the configured prefix
 	for _, iface := range interfaces {
 		if pm.config.DebugMode {
-			log.Printf("Debug: VM %d on node %s - checking interface %s", id, nodeName, iface.Name)
+			pm.logger.Debug("Checking interface for VM",
+				zap.Int("id", id),
+				zap.String("node", nodeName),
+				zap.String("interface", iface.Name),
+			)
 		}
-		
+
 		for _, ipAddr := range iface.IPAddresses {
 			if ipAddr.IPAddressType == "ipv4" {
 				ip := ipAddr.IPAddress
-				
+
 				// Validate it's a proper IP and matches prefix
 				if net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.config.IPPrefix) {
 					if pm.config.DebugMode {
-						log.Printf("Debug: VM %d on node %s - found IP %s on interface %s", id, nodeName, ip, iface.Name)
+						pm.logger.Debug("Found IP for VM on node",
+							zap.Int("id", id),
+							zap.String("node", nodeName),
+							zap.String("ip", ip),
+							zap.String("interface", iface.Name),
+						)
 					}
 					return ip, nil
 				}

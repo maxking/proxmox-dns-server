@@ -11,9 +11,16 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 	"proxmox-dns-server/pkg/config"
 	"proxmox-dns-server/pkg/proxmox"
 )
+
+// Helper function to create a test logger
+func newTestLogger() *zap.Logger {
+	logger, _ := zap.NewDevelopment()
+	return logger
+}
 
 // Helper function to create a test ProxmoxConfig
 func createTestProxmoxConfig() config.ProxmoxConfig {
@@ -37,14 +44,16 @@ func TestNewServer(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, cfg, server.config)
 	assert.NotNil(t, server.proxmox)
 	assert.NotNil(t, server.ctx)
 	assert.NotNil(t, server.cancel)
+	assert.NotNil(t, server.logger)
 }
 
 func TestDNSServerErrorConstants(t *testing.T) {
@@ -221,8 +230,9 @@ func TestServer_resolveA(t *testing.T) {
 				RefreshInterval: 30 * time.Second,
 				DebugMode:       true,
 			}
+			logger := newTestLogger()
 
-			server := NewServer(ctx, cfg, createTestProxmoxConfig())
+			server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 			// Replace the proxmox manager with our mock
 			mockProxmox := NewMockProxmoxManager()
@@ -264,8 +274,9 @@ func TestServer_handleDNSRequest(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Setup mock proxmox manager
 	mockProxmox := NewMockProxmoxManager()
@@ -373,8 +384,9 @@ func TestServer_handleDNSRequest_Forwarding(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, serverConfig, createTestProxmoxConfig())
+	server := NewServer(ctx, serverConfig, createTestProxmoxConfig(), logger)
 
 	// Create DNS request for an external domain
 	req := new(dns.Msg)
@@ -406,8 +418,9 @@ func TestServer_handleDNSRequest_Forwarding_UpstreamError(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, serverConfig, createTestProxmoxConfig())
+	server := NewServer(ctx, serverConfig, createTestProxmoxConfig(), logger)
 
 	// Create DNS request for an external domain
 	req := new(dns.Msg)
@@ -515,8 +528,9 @@ func TestServer_Stop(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Test stopping server without starting it
 	err := server.Stop()
@@ -542,8 +556,9 @@ func TestServer_StartWithCancelledContext(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Starting with cancelled context should return context error
 	err := server.Start()
@@ -561,8 +576,9 @@ func TestServer_StartWithInvalidInterface(t *testing.T) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	err := server.Start()
 	assert.Error(t, err)
@@ -581,8 +597,9 @@ func TestServer_periodicRefresh(t *testing.T) {
 		RefreshInterval: 10 * time.Millisecond, // Very short interval for testing
 		DebugMode:       true,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Replace with mock
 	mockProxmox := NewMockProxmoxManager()
@@ -622,8 +639,9 @@ func TestServer_Integration(t *testing.T) {
 		RefreshInterval: 100 * time.Millisecond,
 		DebugMode:       true,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Replace with mock that has test data
 	mockProxmox := NewMockProxmoxManager()
@@ -675,8 +693,9 @@ func BenchmarkServer_resolveA(b *testing.B) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Setup mock with test data
 	mockProxmox := NewMockProxmoxManager()
@@ -705,8 +724,9 @@ func BenchmarkServer_handleDNSRequest(b *testing.B) {
 		RefreshInterval: 30 * time.Second,
 		DebugMode:       false,
 	}
+	logger := newTestLogger()
 
-	server := NewServer(ctx, cfg, createTestProxmoxConfig())
+	server := NewServer(ctx, cfg, createTestProxmoxConfig(), logger)
 
 	// Setup mock
 	mockProxmox := NewMockProxmoxManager()

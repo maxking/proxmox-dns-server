@@ -12,15 +12,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
 	"proxmox-dns-server/pkg/config"
 	"proxmox-dns-server/pkg/dns"
+)
+
+var (
+	logger *zap.Logger
 )
 
 // Application-level error variables
@@ -76,7 +80,7 @@ func main() {
 	}
 
 	var configFile = flag.String("config", "", "Path to a JSON configuration file")
-	
+
 	// Server flags
 	var zone = flag.String("zone", "", "DNS zone to serve")
 	var port = flag.String("port", "53", "Port to listen on")
@@ -152,22 +156,32 @@ func main() {
 		cfg.Proxmox.InsecureTLS = *insecureTLS
 	}
 
+	// Initialize logger
+	logConfig := zap.NewProductionConfig()
+	if cfg.Server.DebugMode {
+		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	}
+	logger, err := logConfig.Build()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
+
 	// Validate server configuration
 	if err := cfg.Server.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Server configuration validation failed: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Server configuration validation failed", zap.Error(err))
 	}
 
 	// Validate Proxmox configuration
 	if err := cfg.Proxmox.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Proxmox configuration validation failed: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Proxmox configuration validation failed", zap.Error(err))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	server := dns.NewServer(ctx, cfg.Server, cfg.Proxmox)
+	server := dns.NewServer(ctx, cfg.Server, cfg.Proxmox, logger)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -178,22 +192,29 @@ func main() {
 	go func() {
 		defer wg.Done()
 		<-sigChan
-		log.Println("Received shutdown signal, stopping server...")
+		logger.Info("Received shutdown signal, stopping server...")
 		cancel()
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Printf("Starting Proxmox DNS server for zone %s on port %s", cfg.Server.Zone, cfg.Server.Port)
+		logger.Info("Starting Proxmox DNS server",
+			zap.String("zone", cfg.Server.Zone),
+			zap.String("port", cfg.Server.Port),
+		)
 		if err := server.Start(); err != nil {
-			log.Printf("DNS server startup failed: %v", fmt.Errorf("%w for zone %s on port %s: %v", ErrServerStartup, cfg.Server.Zone, cfg.Server.Port, err))
+			logger.Error("DNS server startup failed",
+				zap.String("zone", cfg.Server.Zone),
+				zap.String("port", cfg.Server.Port),
+				zap.Error(err),
+			)
 			cancel()
 		}
 	}()
 
 	<-ctx.Done()
-	log.Println("Shutting down DNS server...")
+	logger.Info("Shutting down DNS server...")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -206,17 +227,18 @@ func main() {
 	go func() {
 		defer close(done)
 		if err := server.Stop(); err != nil {
-			log.Printf("Server shutdown error: %v", fmt.Errorf("%w: %v", ErrServerShutdown, err))
+			logger.Error("Server shutdown error", zap.Error(err))
 		}
 	}()
 
 	select {
 	case <-done:
-		log.Println("Server stopped gracefully")
+		logger.Info("Server stopped gracefully")
 	case <-shutdownCtx.Done():
-		log.Println("Shutdown timeout exceeded, forcing exit")
+		logger.Warn("Shutdown timeout exceeded, forcing exit")
 	}
 }
+
 
 func generateSampleConfig() {
 	sampleConfig := config.Config{
@@ -244,7 +266,8 @@ func generateSampleConfig() {
 
 	output, err := json.MarshalIndent(sampleConfig, "", "  ")
 	if err != nil {
-		log.Fatalf("Failed to generate sample config: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to generate sample config: %v\n", err)
+		os.Exit(1)
 	}
 
 	fmt.Println(string(output))
