@@ -15,6 +15,18 @@ import (
 	"proxmox-dns-server/pkg/proxmox"
 )
 
+// Helper function to create a test ProxmoxConfig
+func createTestProxmoxConfig() config.ProxmoxConfig {
+	return config.ProxmoxConfig{
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
+	}
+}
+
 func TestNewServer(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.ServerConfig{
@@ -26,7 +38,7 @@ func TestNewServer(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	assert.NotNil(t, server)
 	assert.Equal(t, cfg, server.config)
@@ -210,7 +222,7 @@ func TestServer_resolveA(t *testing.T) {
 				DebugMode:       true,
 			}
 
-			server := NewServer(ctx, cfg)
+			server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 			// Replace the proxmox manager with our mock
 			mockProxmox := NewMockProxmoxManager()
@@ -253,7 +265,7 @@ func TestServer_handleDNSRequest(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Setup mock proxmox manager
 	mockProxmox := NewMockProxmoxManager()
@@ -362,7 +374,7 @@ func TestServer_handleDNSRequest_Forwarding(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, serverConfig)
+	server := NewServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	// Create DNS request for an external domain
 	req := new(dns.Msg)
@@ -395,7 +407,7 @@ func TestServer_handleDNSRequest_Forwarding_UpstreamError(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, serverConfig)
+	server := NewServer(ctx, serverConfig, createTestProxmoxConfig())
 
 	// Create DNS request for an external domain
 	req := new(dns.Msg)
@@ -504,7 +516,7 @@ func TestServer_Stop(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Test stopping server without starting it
 	err := server.Stop()
@@ -531,7 +543,7 @@ func TestServer_StartWithCancelledContext(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Starting with cancelled context should return context error
 	err := server.Start()
@@ -550,7 +562,7 @@ func TestServer_StartWithInvalidInterface(t *testing.T) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	err := server.Start()
 	assert.Error(t, err)
@@ -570,7 +582,7 @@ func TestServer_periodicRefresh(t *testing.T) {
 		DebugMode:       true,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Replace with mock
 	mockProxmox := NewMockProxmoxManager()
@@ -611,7 +623,7 @@ func TestServer_Integration(t *testing.T) {
 		DebugMode:       true,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Replace with mock that has test data
 	mockProxmox := NewMockProxmoxManager()
@@ -664,7 +676,7 @@ func BenchmarkServer_resolveA(b *testing.B) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Setup mock with test data
 	mockProxmox := NewMockProxmoxManager()
@@ -694,7 +706,7 @@ func BenchmarkServer_handleDNSRequest(b *testing.B) {
 		DebugMode:       false,
 	}
 
-	server := NewServer(ctx, cfg)
+	server := NewServer(ctx, cfg, createTestProxmoxConfig())
 
 	// Setup mock
 	mockProxmox := NewMockProxmoxManager()

@@ -4,7 +4,7 @@
 // The server automatically discovers Proxmox containers and VMs,
 // caches their information, and provides DNS A record responses
 // for queries matching the configured zone.
-package main
+package proxmox
 
 import (
 	"context"

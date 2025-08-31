@@ -3,28 +3,14 @@ package proxmox
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
+
 	"proxmox-dns-server/pkg/config"
 )
-
-func TestNewManager(t *testing.T) {
-	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
-	}
-
-	manager := NewManager(cfg)
-
-	assert.NotNil(t, manager)
-	assert.Equal(t, cfg, manager.config)
-}
 
 func TestProxmoxErrorConstants(t *testing.T) {
 	assert.NotEmpty(t, ErrContainerNotFound.Error())
@@ -47,13 +33,33 @@ func TestProxmoxIDConstants(t *testing.T) {
 	assert.Equal(t, 999999999, MaxProxmoxID)
 }
 
-func TestManager_GetInstanceByIdentifier(t *testing.T) {
+func TestNewProxmoxManager(t *testing.T) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+
+	manager := NewProxmoxManager(cfg)
+
+	assert.NotNil(t, manager)
+	assert.Equal(t, cfg, manager.config)
+	assert.NotNil(t, manager.client)
+}
+
+func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
+	cfg := config.ProxmoxConfig{
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
+	}
+	manager := NewProxmoxManager(cfg)
 
 	// Test with empty storage
 	_, exists := manager.GetInstanceByIdentifier("102")
@@ -85,17 +91,21 @@ func TestManager_GetInstanceByIdentifier(t *testing.T) {
 	assert.False(t, exists)
 }
 
-func TestManager_filterIPv4(t *testing.T) {
+func TestProxmoxManager_filterIPv4(t *testing.T) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name       string
 		output     string
+		ipPrefix   string
 		expectedIP string
 		wantErr    bool
 	}{
@@ -165,7 +175,7 @@ func TestManager_filterIPv4(t *testing.T) {
 	}
 }
 
-func TestManager_filterIPv4_DifferentPrefixes(t *testing.T) {
+func TestProxmoxManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 	tests := []struct {
 		name       string
 		ipPrefix   string
@@ -198,11 +208,14 @@ func TestManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := config.ProxmoxConfig{
-				IPPrefix:       tt.ipPrefix,
-				CommandTimeout: 30 * time.Second,
-				DebugMode:      false,
+				IPPrefix:    tt.ipPrefix,
+				APIEndpoint: "https://proxmox:8006/api2/json",
+				Username:    "root@pam",
+				Password:    "secret",
+				NodeName:    "pve",
+				DebugMode:   false,
 			}
-			manager := NewManager(cfg)
+			manager := NewProxmoxManager(cfg)
 
 			result, err := manager.filterIPv4(tt.output)
 			if tt.wantErr {
@@ -219,162 +232,100 @@ func TestManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 // These tests would normally require Proxmox commands to be available,
 // but we'll use environment variables to control behavior for testing
 
-func TestManager_getContainerIP_IDValidation(t *testing.T) {
+func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name    string
 		id      int
 		wantErr bool
-		errMsg  string
+		errmsg  string
 	}{
-		{
-			name:    "Valid ID - minimum",
-			id:      MinProxmoxID,
-			wantErr: false,
-		},
-		{
-			name:    "Valid ID - maximum",
-			id:      MaxProxmoxID,
-			wantErr: false,
-		},
-		{
-			name:    "Valid ID - typical",
-			id:      102,
-			wantErr: false,
-		},
 		{
 			name:    "Invalid ID - too small",
 			id:      MinProxmoxID - 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - too large",
 			id:      MaxProxmoxID + 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - negative",
 			id:      -1,
 			wantErr: true,
-			errMsg:  "invalid ID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Skip actual command execution by using a short timeout
-			// and checking the validation error first
-			if tt.wantErr {
-				_, err := manager.getContainerIP(tt.id)
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				// For valid IDs, we expect command execution to fail
-				// (since we don't have Proxmox installed), but ID validation should pass
-				_, err := manager.getContainerIP(tt.id)
-				// We expect an error due to missing command, but not an ID validation error
-				if err != nil {
-					assert.NotContains(t, err.Error(), "invalid ID")
-				}
-			}
-		})
-	}
-}
-
-func TestManager_getVMIP_IDValidation(t *testing.T) {
-	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
-	}
-	manager := NewManager(cfg)
-
-	tests := []struct {
-		name    string
-		id      int
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:    "Invalid ID - too small",
-			id:      MinProxmoxID - 1,
-			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
-			name:    "Invalid ID - too large",
-			id:      MaxProxmoxID + 1,
-			wantErr: true,
-			errMsg:  "invalid ID",
-		},
-		{
-			name:    "Valid ID",
+			name:    "Valid ID - should get API connection error",
 			id:      102,
-			wantErr: false,
+			wantErr: true,
+			errmsg:  "failed to get node",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.wantErr {
-				_, err := manager.getVMIP(tt.id)
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				// For valid IDs, we expect command execution to fail
-				// but ID validation should pass
-				_, err := manager.getVMIP(tt.id)
-				if err != nil {
-					assert.NotContains(t, err.Error(), "invalid ID")
-				}
-			}
+			_, err := manager.getContainerIP(tt.id)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errmsg)
 		})
 	}
 }
 
-func TestManager_getContainerIPFromConfig_IDValidation(t *testing.T) {
+func TestProxmoxManager_getVMIP_IDValidation(t *testing.T) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	tests := []struct {
 		name    string
 		id      int
 		wantErr bool
-		errMsg  string
+		errmsg  string
 	}{
 		{
 			name:    "Invalid ID - too small",
 			id:      MinProxmoxID - 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
 		},
 		{
 			name:    "Invalid ID - too large",
 			id:      MaxProxmoxID + 1,
 			wantErr: true,
-			errMsg:  "invalid ID",
+			errmsg:  "invalid ID",
+		},
+		{
+			name:    "Valid ID - should get API connection error",
+			id:      102,
+			wantErr: true,
+			errmsg:  "failed to get node",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.wantErr {
-				_, err := manager.getContainerIPFromConfig(tt.id)
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			}
+			_, err := manager.getVMIP(tt.id)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errmsg)
 		})
 	}
 }
@@ -596,14 +547,6 @@ func TestMockCommandExecution(t *testing.T) {
 	}
 }
 
-func fakeExecCommand(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestMockCommandExecution", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-	return cmd
-}
-
 // TestProxmoxInstance verifies the ProxmoxInstance struct
 func TestProxmoxInstance(t *testing.T) {
 	instance := ProxmoxInstance{
@@ -622,13 +565,16 @@ func TestProxmoxInstance(t *testing.T) {
 }
 
 // Benchmark tests for performance validation
-func BenchmarkManager_filterIPv4(b *testing.B) {
+func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	testOutput := "10.0.1.1 192.168.1.100 172.16.1.1 192.168.1.200"
 
@@ -638,13 +584,16 @@ func BenchmarkManager_filterIPv4(b *testing.B) {
 	}
 }
 
-func BenchmarkManager_GetInstanceByIdentifier(b *testing.B) {
+func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      false,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   false,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	// Add test data
 	for i := 100; i < 200; i++ {
@@ -666,23 +615,26 @@ func BenchmarkManager_GetInstanceByIdentifier(b *testing.B) {
 	}
 }
 
-// TestManager_RefreshInstances tests the refresh functionality
-func TestManager_RefreshInstances(t *testing.T) {
+// TestProxmoxManager_RefreshInstances tests the refresh functionality
+func TestProxmoxManager_RefreshInstances(t *testing.T) {
 	cfg := config.ProxmoxConfig{
-		IPPrefix:       "192.168.",
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      true,
+		IPPrefix:    "192.168.",
+		APIEndpoint: "https://proxmox:8006/api2/json",
+		Username:    "root@pam",
+		Password:    "secret",
+		NodeName:    "pve",
+		DebugMode:   true,
 	}
-	manager := NewManager(cfg)
+	manager := NewProxmoxManager(cfg)
 
 	// Add some existing data
 	manager.instances.Store("100", ProxmoxInstance{ID: 100, Name: "old"})
 
 	// Refresh should clear existing data and try to reload
-	// Since we don't have Proxmox commands available, this will fail
-	// but we can verify that the instances map was cleared
+	// Since we don't have Proxmox API available, individual nodes will fail
+	// but the overall refresh will continue and succeed (just with no instances loaded)
 	err := manager.RefreshInstances()
-	assert.Error(t, err) // Expected to fail without Proxmox commands
+	assert.NoError(t, err) // Should not fail - just logs warnings for unreachable nodes
 
 	// Verify instances were cleared (new sync.Map created)
 	_, exists := manager.GetInstanceByIdentifier("100")

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"proxmox-dns-server/pkg/config"
+	"proxmox-dns-server/pkg/dns"
 )
 
 // Application-level error variables
@@ -166,7 +167,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	server := NewDNSServer(ctx, cfg.Server, cfg.Proxmox)
+	server := dns.NewServer(ctx, cfg.Server, cfg.Proxmox)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
