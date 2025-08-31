@@ -8,9 +8,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
+	"go.uber.org/zap"
 	"proxmox-dns-server/pkg/config"
 )
+
+// Helper function to create a test logger
+func newTestLogger() *zap.SugaredLogger {
+	logger, _ := zap.NewDevelopment()
+	return logger.Sugar()
+}
 
 func TestProxmoxErrorConstants(t *testing.T) {
 	assert.NotEmpty(t, ErrContainerNotFound.Error())
@@ -42,12 +48,14 @@ func TestNewProxmoxManager(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
+	logger := newTestLogger()
 
-	manager := NewProxmoxManager(cfg)
+	manager := NewProxmoxManager(cfg, logger)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, cfg, manager.config)
 	assert.NotNil(t, manager.client)
+	assert.NotNil(t, manager.logger)
 }
 
 func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
@@ -59,7 +67,8 @@ func TestProxmoxManager_GetInstanceByIdentifier(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	// Test with empty storage
 	_, exists := manager.GetInstanceByIdentifier("102")
@@ -100,7 +109,8 @@ func TestProxmoxManager_filterIPv4(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	tests := []struct {
 		name       string
@@ -215,7 +225,8 @@ func TestProxmoxManager_filterIPv4_DifferentPrefixes(t *testing.T) {
 				NodeName:    "pve",
 				DebugMode:   false,
 			}
-			manager := NewProxmoxManager(cfg)
+			logger := newTestLogger()
+			manager := NewProxmoxManager(cfg, logger)
 
 			result, err := manager.filterIPv4(tt.output)
 			if tt.wantErr {
@@ -241,7 +252,8 @@ func TestProxmoxManager_getContainerIP_IDValidation(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	tests := []struct {
 		name    string
@@ -293,7 +305,8 @@ func TestProxmoxManager_getVMIP_IDValidation(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	tests := []struct {
 		name    string
@@ -574,7 +587,8 @@ func BenchmarkProxmoxManager_filterIPv4(b *testing.B) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	testOutput := "10.0.1.1 192.168.1.100 172.16.1.1 192.168.1.200"
 
@@ -593,7 +607,8 @@ func BenchmarkProxmoxManager_GetInstanceByIdentifier(b *testing.B) {
 		NodeName:    "pve",
 		DebugMode:   false,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	// Add test data
 	for i := 100; i < 200; i++ {
@@ -625,7 +640,8 @@ func TestProxmoxManager_RefreshInstances(t *testing.T) {
 		NodeName:    "pve",
 		DebugMode:   true,
 	}
-	manager := NewProxmoxManager(cfg)
+	logger := newTestLogger()
+	manager := NewProxmoxManager(cfg, logger)
 
 	// Add some existing data
 	manager.instances.Store("100", ProxmoxInstance{ID: 100, Name: "old"})

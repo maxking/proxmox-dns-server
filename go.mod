@@ -8,6 +8,7 @@ require (
 	github.com/luthermonson/go-proxmox v0.2.2
 	github.com/miekg/dns v1.1.68
 	github.com/stretchr/testify v1.10.0
+	go.uber.org/zap v1.27.0
 )
 
 require (
@@ -19,6 +20,7 @@ require (
 	github.com/jinzhu/copier v0.3.4 // indirect
 	github.com/magefile/mage v1.14.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/mod v0.24.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
