@@ -49,16 +49,11 @@ type Server struct {
 
 // NewServer creates a new DNS server instance with the given configuration.
 // It initializes the Proxmox manager and sets up the context for graceful shutdown.
-func NewServer(parentCtx context.Context, cfg config.ServerConfig) *Server {
+func NewServer(parentCtx context.Context, serverConfig config.ServerConfig, proxmoxConfig config.ProxmoxConfig) *Server {
 	ctx, cancel := context.WithCancel(parentCtx)
-	proxmoxConfig := config.ProxmoxConfig{
-		IPPrefix:       cfg.IPPrefix,
-		CommandTimeout: 30 * time.Second,
-		DebugMode:      cfg.DebugMode,
-	}
 	return &Server{
-		config:  cfg,
-		proxmox: proxmox.NewManager(proxmoxConfig),
+		config:  serverConfig,
+		proxmox: proxmox.NewProxmoxManager(proxmoxConfig),
 		ctx:     ctx,
 		cancel:  cancel,
 	}
