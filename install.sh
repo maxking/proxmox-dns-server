@@ -7,6 +7,7 @@ INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
 CONFIG_DIR="/etc"
 CONFIG_FILE="$CONFIG_DIR/$SERVICE_NAME.json"
+REPO_NAME="maxking/proxmox-dns-server"
 
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root"
@@ -17,9 +18,9 @@ echo "Installing Proxmox DNS Server..."
 
 echo "Fetching latest release information..."
 
-RELEASE_JSON=$(curl -s "https://git.araj.me/api/v1/repos/maxking/proxmox-dns-server/releases/latest")
-LATEST_RELEASE=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | contains("linux-amd64")) | .browser_download_url')
+RELEASE_JSON=$(curl -s "https://api.github.com/repos/$REPO_NAME/releases/latest")
+LATEST_RELEASE=$(echo "$RELEASE_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep '"browser_download_url":' | grep 'linux-amd64' | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -z "$LATEST_RELEASE" ] || [ -z "$DOWNLOAD_URL" ]; then
     echo "Error: Could not fetch latest release information"
