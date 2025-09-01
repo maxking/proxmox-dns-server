@@ -402,18 +402,17 @@ func (pm *ProxmoxManager) extractIPFromNetConfig(netConfig string) string {
 	if ipStart == -1 {
 		return ""
 	}
-	
+
 	ipStart += 3 // Skip "ip="
-	
+
 	// Find the end of the IP (either a comma, slash, or end of string)
 	ipEnd := strings.IndexAny(netConfig[ipStart:], ",/")
 	if ipEnd == -1 {
 		ipEnd = len(netConfig) - ipStart
 	}
-	
+
 	return netConfig[ipStart : ipStart+ipEnd]
 }
-
 
 // getVMIP retrieves the IP address of a Proxmox virtual machine by ID via QEMU guest agent.
 // It uses the QEMU guest agent to query network interfaces and extract IP information

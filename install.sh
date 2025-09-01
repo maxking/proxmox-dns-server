@@ -5,8 +5,8 @@ set -e
 SERVICE_NAME="proxmox-dns-server"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_DIR="/etc/systemd/system"
-CONFIG_DIR="/etc"
-CONFIG_FILE="$CONFIG_DIR/$SERVICE_NAME.json"
+CONFIG_DIR="/etc/$SERVICE_NAME"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 REPO_NAME="maxking/proxmox-dns-server"
 
 if [[ $EUID -ne 0 ]]; then
@@ -42,6 +42,8 @@ chmod +x /tmp/proxmox-dns-server
 mv /tmp/proxmox-dns-server "$INSTALL_DIR/"
 
 if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Creating configuration directory at $CONFIG_DIR..."
+    mkdir -p "$CONFIG_DIR"
     echo "Creating default configuration file at $CONFIG_FILE..."
     cat > "$CONFIG_FILE" << EOF
 {
@@ -78,7 +80,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/proxmox-dns-server -config $CONFIG_FILE
+ExecStart=$INSTALL_DIR/proxmox-dns-server
 Restart=always
 RestartSec=5
 User=root

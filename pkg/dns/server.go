@@ -39,7 +39,7 @@ type ProxmoxManagerInterface interface {
 // Server represents the main DNS server that handles incoming DNS queries
 // and resolves them to Proxmox container and VM IP addresses.
 type Server struct {
-	config  config.ServerConfig      // Server configuration
+	config  config.ServerConfig     // Server configuration
 	proxmox ProxmoxManagerInterface // Manager for Proxmox instance data
 	server  *dns.Server             // Underlying DNS server
 	ctx     context.Context         // Context for graceful shutdown

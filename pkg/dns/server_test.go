@@ -111,12 +111,12 @@ func (m *MockProxmoxManager) WasRefreshed() bool {
 
 func TestServer_resolveA(t *testing.T) {
 	tests := []struct {
-		name            string
-		queryName       string
-		zone            string
-		instances       map[string]proxmox.ProxmoxInstance
-		expectedIP      string
-		expectedNil     bool
+		name        string
+		queryName   string
+		zone        string
+		instances   map[string]proxmox.ProxmoxInstance
+		expectedIP  string
+		expectedNil bool
 	}{
 		{
 			name:      "Resolve by ID - container",
@@ -151,10 +151,10 @@ func TestServer_resolveA(t *testing.T) {
 			expectedNil: false,
 		},
 		{
-			name:      "Instance not found",
-			queryName: "notfound.example.com.",
-			zone:      "example.com",
-			instances: map[string]proxmox.ProxmoxInstance{},
+			name:        "Instance not found",
+			queryName:   "notfound.example.com.",
+			zone:        "example.com",
+			instances:   map[string]proxmox.ProxmoxInstance{},
 			expectedNil: true,
 		},
 		{

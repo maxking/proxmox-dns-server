@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -37,34 +36,20 @@ var (
 const usageHelp = `Error: %v
 
 Usage:
-  %s [command] [options]
+  %s [command] [config-file-path]
 
 Commands:
   generate-config   Generate a sample JSON configuration file and print it to stdout
 
-Options:
-  -config           Path to a JSON configuration file
-  -zone             DNS zone to serve
-  -api-endpoint     Proxmox API endpoint (https://proxmox:8006/api2/json)
-  -username         Proxmox username (e.g. root@pam)
-  -password         Proxmox password
-  -api-token        Proxmox API token (alternative to username/password)
-  -api-secret       Proxmox API secret (required with api-token)
-  -node             Proxmox node name (if not specified, queries all cluster nodes)
-  -port             Port to listen on (default: 53)
-  -interface        Interface to bind to (default: all interfaces)
-  -ip-prefix        IP prefix filter for container/VM IPs (default: 192.168.)
-  -insecure-tls     Skip TLS certificate verification
-  -debug            Enable debug logging
-
-Configuration file overrides command-line flags.
+Arguments:
+  config-file-path  Path to a JSON configuration file (default: /etc/proxmox-dns-server/config.json)
 
 Examples:
-  # Using command-line flags:
-  %s -zone p01.araj.me -api-endpoint https://proxmox:8006/api2/json -node pve -username root@pam -password secret
+  # Using default configuration file:
+  %s
   
-  # Using a configuration file:
-  %s -config /etc/proxmox-dns-server/config.json
+  # Using a custom configuration file:
+  %s /path/to/config.json
 
   # Generate a sample configuration:
   %s generate-config
@@ -79,81 +64,19 @@ func main() {
 		os.Exit(0)
 	}
 
-	var configFile = flag.String("config", "", "Path to a JSON configuration file")
-
-	// Server flags
-	var zone = flag.String("zone", "", "DNS zone to serve")
-	var port = flag.String("port", "53", "Port to listen on")
-	var iface = flag.String("interface", "", "Interface to bind to")
-	var upstream = flag.String("upstream", "", "Upstream DNS server")
-	var ipPrefix = flag.String("ip-prefix", "192.168.", "IP prefix filter")
-	var debug = flag.Bool("debug", false, "Enable debug logging")
-
-	// Proxmox flags
-	var apiEndpoint = flag.String("api-endpoint", "", "Proxmox API endpoint")
-	var username = flag.String("username", "", "Proxmox username")
-	var password = flag.String("password", "", "Proxmox password")
-	var apiToken = flag.String("api-token", "", "Proxmox API token")
-	var apiSecret = flag.String("api-secret", "", "Proxmox API secret")
-	var nodeName = flag.String("node", "", "Proxmox node name")
-	var insecureTLS = flag.Bool("insecure-tls", false, "Skip TLS verification")
-
-	flag.Parse()
-
-	var cfg *config.Config
-	var err error
-
-	if *configFile != "" {
-		cfg, err = config.LoadConfig(*configFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config file: %v\n", err)
-			os.Exit(1)
-		}
+	// Determine config file path
+	var configFile string
+	if len(os.Args) > 1 && os.Args[1] != "generate-config" {
+		configFile = os.Args[1]
 	} else {
-		cfg = &config.Config{}
+		configFile = "/etc/proxmox-dns-server/config.json"
 	}
 
-	// Override config with flags if they are provided
-	if *zone != "" {
-		cfg.Server.Zone = *zone
-	}
-	if *port != "53" {
-		cfg.Server.Port = *port
-	}
-	if *iface != "" {
-		cfg.Server.BindInterface = *iface
-	}
-	if *upstream != "" {
-		cfg.Server.Upstream = *upstream
-	}
-	if *ipPrefix != "192.168." {
-		cfg.Server.IPPrefix = *ipPrefix
-		cfg.Proxmox.IPPrefix = *ipPrefix
-	}
-	if *debug {
-		cfg.Server.DebugMode = *debug
-		cfg.Proxmox.DebugMode = *debug
-	}
-	if *apiEndpoint != "" {
-		cfg.Proxmox.APIEndpoint = *apiEndpoint
-	}
-	if *username != "" {
-		cfg.Proxmox.Username = *username
-	}
-	if *password != "" {
-		cfg.Proxmox.Password = *password
-	}
-	if *apiToken != "" {
-		cfg.Proxmox.APIToken = *apiToken
-	}
-	if *apiSecret != "" {
-		cfg.Proxmox.APISecret = *apiSecret
-	}
-	if *nodeName != "" {
-		cfg.Proxmox.NodeName = *nodeName
-	}
-	if *insecureTLS {
-		cfg.Proxmox.InsecureTLS = *insecureTLS
+	// Load configuration
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config file '%s': %v\n", configFile, err)
+		os.Exit(1)
 	}
 
 	// Initialize logger
@@ -240,7 +163,6 @@ func main() {
 	}
 }
 
-
 func generateSampleConfig() {
 	sampleConfig := config.Config{
 		Server: config.ServerConfig{
@@ -252,16 +174,16 @@ func generateSampleConfig() {
 			DebugMode:       false,
 		},
 		Proxmox: config.ProxmoxConfig{
-			APIEndpoint: "https://proxmox:8006/api2/json",
-			Username:    "root@pam",
-			Password:    "your-password",
-			APIToken:    "",
-			APISecret:   "",
-			NodeName:    "",
-			InsecureTLS: false,
-			IPPrefix:    "192.168.1.",
+			APIEndpoint:    "https://proxmox:8006/api2/json",
+			Username:       "root@pam",
+			Password:       "your-password",
+			APIToken:       "",
+			APISecret:      "",
+			NodeName:       "",
+			InsecureTLS:    false,
+			IPPrefix:       "192.168.1.",
 			CommandTimeout: 30 * time.Second,
-			DebugMode:   false,
+			DebugMode:      false,
 		},
 	}
 

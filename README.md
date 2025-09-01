@@ -14,7 +14,7 @@ It gives DNS names to containers/VMs, so when the IP address changes, it is auto
 ## Installation
 
 1.  Download the latest release from the [releases page](https://git.araj.me/maxking/proxmox-dns-server/releases).
-2.  Create a configuration file `/etc/proxmox-dns-server.json`:
+2.  Create a configuration file `/etc/proxmox-dns-server/config.json`:
     ```json
     {
       "server": {
@@ -44,7 +44,7 @@ It gives DNS names to containers/VMs, so when the IP address changes, it is auto
 
     [Service]
     Type=simple
-    ExecStart=/usr/local/bin/proxmox-dns-server -config /etc/proxmox-dns-server.json
+    ExecStart=/usr/local/bin/proxmox-dns-server
     Restart=always
     RestartSec=5
     User=root
@@ -62,7 +62,18 @@ It gives DNS names to containers/VMs, so when the IP address changes, it is auto
 
 ## Usage
 
-The server is configured via a JSON file. The default path is `/etc/proxmox-dns-server.json`, but a different path can be specified with the `-config` flag.
+The server is configured via a JSON file. The default path is `/etc/proxmox-dns-server/config.json`, but a different path can be specified as the first argument:
+
+```bash
+# Using default config location
+./proxmox-dns-server
+
+# Using custom config location  
+./proxmox-dns-server /path/to/custom/config.json
+
+# Generate sample configuration
+./proxmox-dns-server generate-config
+```
 
 ### Configuration Options
 
