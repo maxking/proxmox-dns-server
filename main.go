@@ -36,20 +36,20 @@ var (
 const usageHelp = `Error: %v
 
 Usage:
-  %s [command] [config-file-path]
+  %s [command] [options]
 
 Commands:
   generate-config   Generate a sample JSON configuration file and print it to stdout
 
-Arguments:
-  config-file-path  Path to a JSON configuration file (default: /etc/proxmox-dns-server/config.json)
+Options:
+  -config           Path to a JSON configuration file (default: /etc/proxmox-dns-server/config.json)
 
 Examples:
   # Using default configuration file:
   %s
-  
+
   # Using a custom configuration file:
-  %s /path/to/config.json
+  %s -config /path/to/config.json
 
   # Generate a sample configuration:
   %s generate-config
@@ -66,9 +66,17 @@ func main() {
 
 	// Determine config file path
 	var configFile string
-	if len(os.Args) > 1 && os.Args[1] != "generate-config" {
-		configFile = os.Args[1]
-	} else {
+	
+	// Check for -config flag
+	for i, arg := range os.Args[1:] {
+		if arg == "-config" && i+2 < len(os.Args) {
+			configFile = os.Args[i+2]
+			break
+		}
+	}
+	
+	// If no -config flag found, use default
+	if configFile == "" {
 		configFile = "/etc/proxmox-dns-server/config.json"
 	}
 

@@ -22,6 +22,6 @@ func TestUsageHelp(t *testing.T) {
 	assert.Contains(t, usageHelp, "Usage:")
 	assert.Contains(t, usageHelp, "Examples:")
 	assert.Contains(t, usageHelp, "generate-config")
-	assert.Contains(t, usageHelp, "config-file-path")
+	assert.Contains(t, usageHelp, "-config")
 	assert.Contains(t, usageHelp, "/etc/proxmox-dns-server/config.json")
 }
