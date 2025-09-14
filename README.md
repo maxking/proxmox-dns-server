@@ -15,7 +15,7 @@ I use it to give DNS names to my containers/VMs to set CNAME records for my serv
 ## Installation
 
 ```
-wget https://git.araj.me/maxking/proxmox-dns-server/raw/branch/master/install.sh
+wget https://raw.githubusercontent.com/maxking/proxmox-dns-server/refs/heads/master/install.sh
 chmod +x install.sh
 ./install.sh -p 5353 -z p01.araj.me
 ```
