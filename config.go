@@ -7,9 +7,19 @@ import (
 	"os"
 )
 
+type StaticRecord struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	TTL   uint32 `json:"ttl"`
+}
+
 type Config struct {
-	Zone string `json:"zone"`
-	Port string `json:"port"`
+	Zone          string         `json:"zone"`
+	Port          string         `json:"port"`
+	UpstreamDNS   string         `json:"upstreamDNS,omitempty"`
+	StaticRecords []StaticRecord `json:"staticRecords,omitempty"`
+	RecordsFile   string         `json:"recordsFile,omitempty"`
 }
 
 func LoadConfig() (*Config, error) {

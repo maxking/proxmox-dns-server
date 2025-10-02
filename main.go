@@ -29,7 +29,7 @@ func main() {
 		os.Exit(1)
 	}
 	
-	server := NewDNSServer(config.Zone, config.Port)
+	server := NewDNSServer(config)
 	
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -43,7 +43,7 @@ func main() {
 		os.Exit(0)
 	}()
 	
-	log.Printf("Starting Proxmox DNS server for zone %s on port %s", config.Zone, config.Port)
+	log.Printf("Starting general-purpose DNS server for zone %s on port %s", config.Zone, config.Port)
 	if err := server.Start(); err != nil {
 		log.Fatalf("Failed to start DNS server: %v", err)
 	}
