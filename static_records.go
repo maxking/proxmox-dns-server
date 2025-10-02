@@ -155,6 +155,7 @@ func (srm *StaticRecordManager) ResolveRecord(identifier, queryName, qtype strin
 	}
 
 	seen := make(map[string]struct{})
+	seenRecords := make(map[string]struct{})
 	var records []StaticRecord
 	for _, key := range lookupKeys {
 		if key == "" {
@@ -165,7 +166,14 @@ func (srm *StaticRecordManager) ResolveRecord(identifier, queryName, qtype strin
 		}
 		seen[key] = struct{}{}
 		if recs, ok := srm.records[key]; ok {
-			records = append(records, recs...)
+			for _, record := range recs {
+				signature := recordSignature(record)
+				if _, exists := seenRecords[signature]; exists {
+					continue
+				}
+				seenRecords[signature] = struct{}{}
+				records = append(records, record)
+			}
 		}
 	}
 
@@ -258,4 +266,10 @@ func (srm *StaticRecordManager) HasRecord(name string) bool {
 	key := normalizeRecordKey(name)
 	_, exists := srm.records[key]
 	return exists
+}
+
+func recordSignature(record StaticRecord) string {
+	nameKey := normalizeRecordKey(record.Name)
+	typeKey := strings.ToUpper(record.Type)
+	return nameKey + "|" + typeKey + "|" + record.Value + "|" + strconv.FormatUint(uint64(record.TTL), 10)
 }
