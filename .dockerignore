@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github
+.forgejo
+
+# Documentation
+README.md
+prompts.txt
+
+# Scripts
+install.sh
+
+# Environment files
+.env
+.env.example
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore

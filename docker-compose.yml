@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  proxmox-dns:
+    build: .
+    container_name: proxmox-dns-server
+    restart: unless-stopped
+
+    # Required for accessing Proxmox commands
+    privileged: true
+
+    # Network configuration
+    network_mode: host
+
+    # Environment variables
+    environment:
+      - DNS_ZONE=${DNS_ZONE}
+      - DNS_PORT=${DNS_PORT:-53}
+      - DNS_INTERFACE=${DNS_INTERFACE:-}
+
+    # Command with environment variable substitution
+    command: >
+      -zone ${DNS_ZONE}
+      -port ${DNS_PORT:-53}
+      ${DNS_INTERFACE:+-interface ${DNS_INTERFACE}}
+
+    # Mount Proxmox binaries and required paths
+    volumes:
+      # Proxmox command-line tools
+      - /usr/sbin/pct:/usr/sbin/pct:ro
+      - /usr/sbin/qm:/usr/sbin/qm:ro
+      - /usr/sbin/pvesh:/usr/sbin/pvesh:ro
+
+      # Proxmox libraries and dependencies
+      - /usr/share/perl5:/usr/share/perl5:ro
+      - /usr/share/pve-manager:/usr/share/pve-manager:ro
+
+      # Container and VM data access
+      - /var/lib/lxc:/var/lib/lxc:ro
+      - /var/lib/vz:/var/lib/vz:ro
+      - /etc/pve:/etc/pve:ro
+
+      # System resources needed by Proxmox commands
+      - /run/lock:/run/lock
+      - /var/run:/var/run
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "nc", "-uz", "127.0.0.1", "${DNS_PORT:-53}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

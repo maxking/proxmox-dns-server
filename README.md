@@ -14,7 +14,44 @@ I use it to give DNS names to my containers/VMs to set CNAME records for my serv
 
 ## Installation
 
+### Docker Deployment (Recommended)
+
+1. Clone the repository or download the files:
+```bash
+git clone https://git.araj.me/maxking/proxmox-dns-server.git
+cd proxmox-dns-server
 ```
+
+2. Create a `.env` file from the example:
+```bash
+cp .env.example .env
+```
+
+3. Edit `.env` and configure your DNS zone:
+```bash
+DNS_ZONE=p01.araj.me
+DNS_PORT=53
+DNS_INTERFACE=  # Optional: leave empty for all interfaces
+```
+
+4. Deploy with Docker Compose:
+```bash
+docker-compose up -d
+```
+
+5. View logs:
+```bash
+docker-compose logs -f
+```
+
+6. Stop the service:
+```bash
+docker-compose down
+```
+
+### Traditional Installation (Systemd)
+
+```bash
 wget https://git.araj.me/maxking/proxmox-dns-server/raw/branch/master/install.sh
 chmod +x install.sh
 ./install.sh -p 5353 -z p01.araj.me
@@ -55,6 +92,12 @@ For zone `p01.araj.me`:
   that's how I use it. If you feel like using this and would like a configuration
   for this, open a issue or even better, a PR. We might be also able to support
   like a configuration of sorts to define the interface.
+
+### Docker Deployment Requirements
+
+- Docker and Docker Compose installed on the Proxmox node
+- The container runs in privileged mode to access Proxmox commands
+- Requires mounting Proxmox binaries and configuration from the host
 
 ## Permissions
 
