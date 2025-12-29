@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proxmox DNS Inventory</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        font-family: "Georgia", "Times New Roman", serif;
+        background: #f7f3eb;
+        color: #2b2521;
+      }
+      header {
+        padding: 24px 32px;
+        background: #f2e6d9;
+        border-bottom: 1px solid #d8c8b8;
+      }
+      h1 {
+        margin: 0 0 6px 0;
+        font-size: 28px;
+        letter-spacing: 0.5px;
+      }
+      .subhead {
+        font-size: 14px;
+        color: #5a4a3f;
+      }
+      main {
+        padding: 24px 32px 48px;
+      }
+      .controls {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+      }
+      .button {
+        padding: 8px 14px;
+        border: 1px solid #5a4a3f;
+        text-decoration: none;
+        color: #2b2521;
+        background: #fffaf2;
+        font-size: 14px;
+        border-radius: 999px;
+      }
+      .hint {
+        font-size: 12px;
+        color: #6b5c51;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fffaf2;
+        border: 1px solid #dccdbf;
+      }
+      th,
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #e4d7cb;
+        text-align: left;
+        font-size: 14px;
+      }
+      th {
+        background: #efe0d3;
+        font-weight: 600;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #e0d1c2;
+        font-size: 12px;
+      }
+      .empty {
+        color: #9b8a7d;
+      }
+      @media (max-width: 720px) {
+        header,
+        main {
+          padding: 18px;
+        }
+        table,
+        thead,
+        tbody,
+        th,
+        td,
+        tr {
+          display: block;
+        }
+        thead {
+          display: none;
+        }
+        tr {
+          margin-bottom: 16px;
+          border: 1px solid #e4d7cb;
+          border-radius: 12px;
+          overflow: hidden;
+        }
+        td {
+          border-bottom: 1px solid #e4d7cb;
+        }
+        td:last-child {
+          border-bottom: none;
+        }
+        td::before {
+          content: attr(data-label);
+          display: block;
+          font-size: 12px;
+          color: #6b5c51;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Proxmox DNS Inventory</h1>
+      <div class="subhead">Zone: {{.Zone}} • Generated {{.GeneratedAt}}</div>
+    </header>
+    <main>
+      <div class="controls">
+        <a class="button" href="/">Refresh</a>
+        <a class="button" href="/?reverse=1">Refresh with reverse lookup</a>
+        <span class="hint">Reverse lookups may take a few seconds.</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>IPv4</th>
+            <th>FQDN</th>
+            <th>Reverse DNS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Instances}}
+          <tr>
+            <td data-label="ID">{{.ID}}</td>
+            <td data-label="Name">{{.Name}}</td>
+            <td data-label="Type"><span class="pill">{{.Type}}</span></td>
+            <td data-label="Status">{{.Status}}</td>
+            <td data-label="IPv4">{{if .IPv4}}{{.IPv4}}{{else}}<span class="empty">-</span>{{end}}</td>
+            <td data-label="FQDN">{{if .FQDN}}{{.FQDN}}{{else}}<span class="empty">-</span>{{end}}</td>
+            <td data-label="Reverse DNS">
+              {{if $.ReverseLookups}}
+                {{if .ReverseNames}}
+                  {{range .ReverseNames}}{{.}}<br />{{end}}
+                {{else}}
+                  <span class="empty">None</span>
+                {{end}}
+              {{else}}
+                <span class="empty">Run lookup</span>
+              {{end}}
+            </td>
+          </tr>
+          {{else}}
+          <tr>
+            <td colspan="7" class="empty">No running instances found.</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </main>
+  </body>
+</html>
