@@ -1,0 +1,20 @@
+services:
+  proxmox-dns-server:
+    build: .
+    container_name: proxmox-dns-server
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "8080:8080"
+    environment:
+      - PVE_API_TOKEN_SECRET=${PVE_API_TOKEN_SECRET}
+    command:
+      - "-zone=${DNS_ZONE}"
+      - "-api-url=${PVE_API_URL}"
+      - "-api-token-id=${PVE_API_TOKEN_ID}"
+      - "-port=53"
+      - "-web-port=8080"
+      - "-ip-prefix=${IP_PREFIX:-192.168.}"
+      # Uncomment the line below if your Proxmox uses a self-signed certificate
+      # - "-api-insecure"
