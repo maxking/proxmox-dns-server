@@ -1,0 +1,45 @@
+name: Auto Tag
+
+on:
+  push:
+    branches:
+    - foobar
+
+jobs:
+  auto-tag:
+    runs-on: docker
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Get latest tag
+      id: latest_tag
+      run: |
+        latest_tag=$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        if [ -z "$latest_tag" ]; then
+          latest_tag="v0.0.0"
+        fi
+        echo "tag=$latest_tag" >> $GITHUB_OUTPUT
+        echo "Latest tag: $latest_tag"
+    
+    - name: Bump patch version
+      id: new_tag
+      run: |
+        latest_tag="${{ steps.latest_tag.outputs.tag }}"
+        version=${latest_tag#v}
+        IFS='.' read -r major minor patch <<< "$version"
+        new_patch=$((patch + 1))
+        new_tag="v${major}.${minor}.${new_patch}"
+        echo "tag=$new_tag" >> $GITHUB_OUTPUT
+        echo "New tag: $new_tag"
+    
+    - name: Create and push tag
+      run: |
+        new_tag="${{ steps.new_tag.outputs.tag }}"
+        git config --local user.email "action@forgejo.git.araj.me"
+        git config --local user.name "Forgejo Action"
+        git tag "$new_tag"
+        git push origin "$new_tag"
