@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -289,4 +290,30 @@ func (pm *ProxmoxManager) GetInstanceByIdentifier(identifier string) (ProxmoxIns
 	}
 	instance, ok := value.(ProxmoxInstance)
 	return instance, ok
+}
+
+func (pm *ProxmoxManager) ListInstances() []ProxmoxInstance {
+	unique := make(map[int]ProxmoxInstance)
+	pm.instances.Range(func(key, value interface{}) bool {
+		instance, ok := value.(ProxmoxInstance)
+		if !ok {
+			return true
+		}
+		unique[instance.ID] = instance
+		return true
+	})
+
+	instances := make([]ProxmoxInstance, 0, len(unique))
+	for _, instance := range unique {
+		instances = append(instances, instance)
+	}
+
+	sort.Slice(instances, func(i, j int) bool {
+		if instances[i].Type == instances[j].Type {
+			return instances[i].ID < instances[j].ID
+		}
+		return instances[i].Type < instances[j].Type
+	})
+
+	return instances
 }

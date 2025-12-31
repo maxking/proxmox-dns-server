@@ -23,11 +23,14 @@ type DNSServer struct {
 	wg            sync.WaitGroup
 }
 
-func NewDNSServer(zone, port, iface, ipPrefix string, apiClient *ProxmoxAPIClient) *DNSServer {
+func NewDNSServer(zone, port, iface string, pm *ProxmoxManager) *DNSServer {
+	if pm == nil {
+		panic("proxmox manager is required")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &DNSServer{
 		zone:          zone,
-		proxmox:       NewProxmoxManager(ipPrefix, apiClient),
+		proxmox:       pm,
 		port:          port,
 		bindInterface: iface,
 		ctx:           ctx,
