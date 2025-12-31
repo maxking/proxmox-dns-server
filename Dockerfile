@@ -10,8 +10,9 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
+# Copy source code and web templates (needed for go:embed)
 COPY *.go ./
+COPY web/ ./web/
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o proxmox-dns-server .
@@ -24,11 +25,8 @@ WORKDIR /app
 # Install ca-certificates for HTTPS calls to Proxmox API
 RUN apk add --no-cache ca-certificates
 
-# Copy the binary from builder
+# Copy the binary from builder (templates are embedded via go:embed)
 COPY --from=builder /app/proxmox-dns-server .
-
-# Copy web templates
-COPY web/ ./web/
 
 # Expose DNS ports (UDP and TCP) and web UI port
 EXPOSE 53/udp 53/tcp 8080
