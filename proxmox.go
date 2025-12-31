@@ -1,36 +1,133 @@
 package main
 
 import (
-	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"net"
-	"os/exec"
-	"regexp"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type ProxmoxInstance struct {
-	ID      int    `json:"vmid"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Type    string `json:"type"`
-	IPv4    string `json:"ipv4"`
+	ID     int    `json:"vmid"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Type   string `json:"type"`
+	IPv4   string `json:"ipv4"`
+}
+
+type ProxmoxAPIClient struct {
+	baseURL     string
+	tokenID     string
+	tokenSecret string
+	httpClient  *http.Client
+}
+
+type ProxmoxAPIResource struct {
+	VMID   int    `json:"vmid"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Type   string `json:"type"`
+	Node   string `json:"node"`
 }
 
 type ProxmoxManager struct {
 	instances sync.Map
 	ipPrefix  string
+	apiClient *ProxmoxAPIClient
 }
 
-var validIDRegex = regexp.MustCompile(`^\d+$`)
+func NewProxmoxAPIClient(baseURL, tokenID, tokenSecret string, insecure bool) (*ProxmoxAPIClient, error) {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("api base url is required")
+	}
+	if !strings.HasSuffix(baseURL, "/api2/json") {
+		baseURL = baseURL + "/api2/json"
+	}
 
-func NewProxmoxManager(ipPrefix string) *ProxmoxManager {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure},
+	}
+
+	return &ProxmoxAPIClient{
+		baseURL:     baseURL,
+		tokenID:     tokenID,
+		tokenSecret: tokenSecret,
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		},
+	}, nil
+}
+
+func (c *ProxmoxAPIClient) getJSON(path string, out interface{}) error {
+	req, err := http.NewRequest("GET", c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.tokenID != "" && c.tokenSecret != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("PVEAPIToken=%s=%s", c.tokenID, c.tokenSecret))
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("api request failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return err
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(envelope.Data, out)
+}
+
+func (c *ProxmoxAPIClient) ListResources() ([]ProxmoxAPIResource, error) {
+	var resources []ProxmoxAPIResource
+	if err := c.getJSON("/cluster/resources?type=vm", &resources); err != nil {
+		return nil, err
+	}
+	return resources, nil
+}
+
+func (c *ProxmoxAPIClient) GetLXCConfig(node string, id int) (map[string]interface{}, error) {
+	var config map[string]interface{}
+	path := fmt.Sprintf("/nodes/%s/lxc/%d/config", node, id)
+	if err := c.getJSON(path, &config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func (c *ProxmoxAPIClient) GetVMInterfaces(node string, id int) ([]interface{}, error) {
+	var interfaces []interface{}
+	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", node, id)
+	if err := c.getJSON(path, &interfaces); err != nil {
+		return nil, err
+	}
+	return interfaces, nil
+}
+
+func NewProxmoxManager(ipPrefix string, apiClient *ProxmoxAPIClient) *ProxmoxManager {
 	return &ProxmoxManager{
-		ipPrefix: ipPrefix,
+		ipPrefix:  ipPrefix,
+		apiClient: apiClient,
 	}
 }
 
@@ -40,211 +137,78 @@ func (pm *ProxmoxManager) RefreshInstances() error {
 		pm.instances.Delete(key)
 		return true
 	})
-	
-	if err := pm.loadContainers(); err != nil {
-		return fmt.Errorf("failed to load containers: %w", err)
+
+	if pm.apiClient == nil {
+		return fmt.Errorf("api client is required")
 	}
-	
-	if err := pm.loadVMs(); err != nil {
-		return fmt.Errorf("failed to load VMs: %w", err)
+
+	if err := pm.loadInstancesFromAPI(); err != nil {
+		return fmt.Errorf("failed to load instances via API: %w", err)
 	}
-	
 	return nil
 }
 
-func (pm *ProxmoxManager) loadContainers() error {
-	cmd := exec.Command("pct", "list")
-	output, err := cmd.Output()
+func (pm *ProxmoxManager) loadInstancesFromAPI() error {
+	resources, err := pm.apiClient.ListResources()
 	if err != nil {
-		return fmt.Errorf("failed to execute pct list: %w", err)
+		return err
 	}
-	
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	firstLine := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		if firstLine {
-			firstLine = false
-			continue
-		}
-		
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		
-		status := fields[1]
-		name := fields[2]
-		
-		// Only try to get IP for running containers
-		if status != "running" {
-			log.Printf("Debug: Container %d (%s) is %s, skipping IP detection", id, name, status)
-			continue
-		}
-		
-		ipv4, err := pm.getContainerIP(id)
-		if err != nil {
-			log.Printf("Warning: Failed to get IP for container %d (%s): %v", id, name, err)
-			continue
-		}
-		
-		instance := ProxmoxInstance{
-			ID:      id,
-			Name:    name,
-			Status:  status,
-			Type:    "container",
-			IPv4:    ipv4,
-		}
-		
-		pm.instances.Store(strconv.Itoa(id), instance)
-		pm.instances.Store(name, instance)
-	}
-	
-	return nil
-}
 
-func (pm *ProxmoxManager) loadVMs() error {
-	cmd := exec.Command("qm", "list")
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to execute qm list: %w", err)
-	}
-	
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	firstLine := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		if firstLine {
-			firstLine = false
+	for _, resource := range resources {
+		if resource.VMID <= 0 {
 			continue
 		}
-		
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		
-		id, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		
-		name := fields[1]
-		status := fields[2]
-		
-		// Only try to get IP for running VMs
-		if status != "running" {
-			log.Printf("Debug: VM %d (%s) is %s, skipping IP detection", id, name, status)
-			continue
-		}
-		
-		ipv4, err := pm.getVMIP(id)
-		if err != nil {
-			log.Printf("Warning: Failed to get IP for VM %d (%s): %v", id, name, err)
-			continue
-		}
-		
-		instance := ProxmoxInstance{
-			ID:      id,
-			Name:    name,
-			Status:  status,
-			Type:    "vm",
-			IPv4:    ipv4,
-		}
-		
-		pm.instances.Store(strconv.Itoa(id), instance)
-		pm.instances.Store(name, instance)
-	}
-	
-	return nil
-}
 
-func (pm *ProxmoxManager) getContainerIP(id int) (string, error) {
-	if id <= 0 || id > 9999999 {
-		return "", fmt.Errorf("invalid container ID: %d", id)
-	}
-	idStr := strconv.Itoa(id)
-	
-	// First try hostname -I
-	cmd := exec.Command("pct", "exec", idStr, "--", "hostname", "-I")
-	output, err := cmd.Output()
-	if err != nil {
-		log.Printf("Debug: Container %d - hostname -I failed: %v", id, err)
-		
-		// Try alternative command: ip route get 1.1.1.1 | head -1 | awk '{print $7}'
-		cmd = exec.Command("pct", "exec", idStr, "--", "sh", "-c", "ip route get 1.1.1.1 2>/dev/null | head -1 | awk '{print $7}'")
-		output, err = cmd.Output()
-		if err != nil {
-			log.Printf("Debug: Container %d - ip route get failed: %v", id, err)
-			
-			// Try getting IP from container config
-			return pm.getContainerIPFromConfig(id)
+		if resource.Status != "running" {
+			log.Printf("Debug: Instance %d (%s) is %s, skipping IP detection", resource.VMID, resource.Name, resource.Status)
+			continue
 		}
-	}
-	
-	log.Printf("Debug: Container %d - command output: %s", id, string(output))
-	return pm.filterIPv4(string(output))
-}
 
-func (pm *ProxmoxManager) getContainerIPFromConfig(id int) (string, error) {
-	if id <= 0 || id > 999999999 {
-		return "", fmt.Errorf("invalid container ID: %d", id)
-	}
-	cmd := exec.Command("pct", "config", strconv.Itoa(id))
-	output, err := cmd.Output()
-	if err != nil {
-		log.Printf("Debug: Container %d - pct config failed: %v", id, err)
-		return "", err
-	}
-	
-	log.Printf("Debug: Container %d - config output: %s", id, string(output))
-	
-	// Look for net0, net1, etc. lines with IP addresses
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "net") && strings.Contains(line, "ip=") {
-			// Extract IP from line like: net0: name=eth0,bridge=vmbr0,ip=192.168.1.100/24,gw=192.168.1.1
-			parts := strings.Split(line, ",")
-			for _, part := range parts {
-				if strings.HasPrefix(part, "ip=") {
-					ipWithMask := strings.TrimPrefix(part, "ip=")
-					ip := strings.Split(ipWithMask, "/")[0]
-					if strings.HasPrefix(ip, pm.ipPrefix) {
-						log.Printf("Debug: Container %d - Found IP in config: %s", id, ip)
-						return ip, nil
-					}
-				}
+		var instanceType string
+		var ipv4 string
+
+		switch resource.Type {
+		case "lxc":
+			instanceType = "container"
+			config, err := pm.apiClient.GetLXCConfig(resource.Node, resource.VMID)
+			if err != nil {
+				log.Printf("Warning: Failed to get LXC config for %d (%s): %v", resource.VMID, resource.Name, err)
+				continue
 			}
+			ipv4, err = pm.getContainerIPFromConfigMap(resource.VMID, config)
+		case "qemu":
+			instanceType = "vm"
+			interfaces, err := pm.apiClient.GetVMInterfaces(resource.Node, resource.VMID)
+			if err != nil {
+				log.Printf("Warning: Failed to get VM interfaces for %d (%s): %v", resource.VMID, resource.Name, err)
+				continue
+			}
+			ipv4, err = pm.findIPv4FromInterfaces(resource.VMID, interfaces)
+		default:
+			continue
 		}
+
+		if err != nil {
+			log.Printf("Warning: Failed to get IP for %s %d (%s): %v", instanceType, resource.VMID, resource.Name, err)
+			continue
+		}
+
+		instance := ProxmoxInstance{
+			ID:     resource.VMID,
+			Name:   resource.Name,
+			Status: resource.Status,
+			Type:   instanceType,
+			IPv4:   ipv4,
+		}
+
+		pm.instances.Store(strconv.Itoa(resource.VMID), instance)
+		pm.instances.Store(resource.Name, instance)
 	}
-	
-	return "", fmt.Errorf("no IP address found in container config")
+
+	return nil
 }
 
-func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
-	if id <= 0 || id > 999999999 {
-		return "", fmt.Errorf("invalid VM ID: %d", id)
-	}
-	cmd := exec.Command("qm", "guest", "cmd", strconv.Itoa(id), "network-get-interfaces")
-	output, err := cmd.Output()
-	if err != nil {
-		log.Printf("Debug: VM %d - qm guest cmd failed: %v", id, err)
-		return "", err
-	}
-	
-	log.Printf("Debug: VM %d - qm guest cmd output: %s", id, string(output))
-	
-	var interfaces []interface{}
-	if err := json.Unmarshal(output, &interfaces); err != nil {
-		log.Printf("Debug: VM %d - JSON unmarshal failed: %v", id, err)
-		return "", err
-	}
-	
+func (pm *ProxmoxManager) findIPv4FromInterfaces(id int, interfaces []interface{}) (string, error) {
 	log.Printf("Debug: VM %d - Found %d network interfaces", id, len(interfaces))
 	for i, iface := range interfaces {
 		if ifaceMap, ok := iface.(map[string]interface{}); ok {
@@ -253,7 +217,7 @@ func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 				ifaceName = name
 			}
 			log.Printf("Debug: VM %d - Interface %d (%s)", id, i, ifaceName)
-			
+
 			if ipAddresses, ok := ifaceMap["ip-addresses"].([]interface{}); ok {
 				log.Printf("Debug: VM %d - Interface %s has %d IP addresses", id, ifaceName, len(ipAddresses))
 				for j, ip := range ipAddresses {
@@ -275,19 +239,47 @@ func (pm *ProxmoxManager) getVMIP(id int) (string, error) {
 			}
 		}
 	}
-	
+
 	log.Printf("Debug: VM %d - No suitable IPv4 address found", id)
 	return "", fmt.Errorf("no suitable IPv4 address found")
 }
 
-func (pm *ProxmoxManager) filterIPv4(output string) (string, error) {
-	ips := strings.Fields(strings.TrimSpace(output))
-	for _, ip := range ips {
-		if net.ParseIP(ip) != nil && strings.HasPrefix(ip, pm.ipPrefix) {
+func (pm *ProxmoxManager) getContainerIPFromConfigMap(id int, config map[string]interface{}) (string, error) {
+	for key, value := range config {
+		if !strings.HasPrefix(key, "net") {
+			continue
+		}
+		netConfig, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if ip, ok := pm.parseIPFromNetConfigValue(id, netConfig); ok {
 			return ip, nil
 		}
 	}
-	return "", fmt.Errorf("no suitable IPv4 address found")
+
+	return "", fmt.Errorf("no IP address found in container config")
+}
+
+func (pm *ProxmoxManager) parseIPFromNetConfigValue(id int, netConfig string) (string, bool) {
+	parts := strings.Split(netConfig, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, "ip=") {
+			continue
+		}
+		ipWithMask := strings.TrimPrefix(part, "ip=")
+		if ipWithMask == "" || ipWithMask == "dhcp" {
+			continue
+		}
+		ip := strings.Split(ipWithMask, "/")[0]
+		if strings.HasPrefix(ip, pm.ipPrefix) {
+			log.Printf("Debug: Container %d - Found IP in config: %s", id, ip)
+			return ip, true
+		}
+	}
+
+	return "", false
 }
 
 func (pm *ProxmoxManager) GetInstanceByIdentifier(identifier string) (ProxmoxInstance, bool) {

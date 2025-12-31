@@ -28,11 +28,22 @@ Use the right zone `p01.araj.me` or whatever prefix you want.
 # Build the application
 go build -o proxmox-dns-server
 
-# Run with zone specification
-./proxmox-dns-server -zone p01.araj.me
+# Run using the Proxmox API
+./proxmox-dns-server -zone p01.araj.me \
+  -api-url https://proxmox:8006 \
+  -api-token-id root@pam!dns \
+  -api-token-secret <secret>
 
 # Run on custom port
-./proxmox-dns-server -zone p01.araj.me -port 5353
+./proxmox-dns-server -zone p01.araj.me -port 5353 \
+  -api-url https://proxmox:8006 \
+  -api-token-id root@pam!dns \
+  -api-token-secret <secret>
+
+# Read the API token secret from the environment
+PVE_API_TOKEN_SECRET="<secret>" ./proxmox-dns-server -zone p01.araj.me \
+  -api-url https://proxmox:8006 \
+  -api-token-id root@pam!dns
 ```
 
 
@@ -45,12 +56,9 @@ For zone `p01.araj.me`:
 
 ## Requirements
 
-- Must run on the Proxmox VE node. This can be relaxed at some
-  point if we can figure out how to get the IP addresses of
-  containers. VMs IPs are available over API but from what I can
-  find, I couldn't easily get a container's IP.
-- Requires permission to execute `pct` and `qm` commands so we
-  can get the IP address.
+- Provide `-api-url`, `-api-token-id`, and `-api-token-secret`
+  so the server can query the Proxmox API.
+- VM IP detection relies on the QEMU guest agent being installed and running.
 - Only resolves IPv4 addresses starting with 192.168.x.x. This currently because
   that's how I use it. If you feel like using this and would like a configuration
   for this, open a issue or even better, a PR. We might be also able to support
@@ -58,6 +66,19 @@ For zone `p01.araj.me`:
 
 ## Permissions
 
-The application needs to run with sufficient privileges to execute Proxmox commands:
-- `pct list` and `pct exec` for LXC containers
-- `qm list` and `qm guest cmd` for VMs
+The application needs to run with sufficient privileges to query instance data:
+- API mode requires a Proxmox API token that can read:
+  - `GET /cluster/resources?type=vm`
+  - `GET /nodes/<node>/lxc/<id>/config`
+  - `GET /nodes/<node>/qemu/<id>/agent/network-get-interfaces`
+
+## Token Creation
+
+On a Proxmox node, create an API token and capture the secret output:
+
+```bash
+pveum user token add root@pam dns --privsep 0 --comment "proxmox-dns-server"
+```
+
+The command prints the token secret once. Store it securely and pass it via
+`-api-token-secret` or the `PVE_API_TOKEN_SECRET` environment variable (do not commit it).
